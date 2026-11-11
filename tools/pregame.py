@@ -1,10 +1,15 @@
 """Pré-jogo: com os 10 campeões da seleção, diz para que lado começar e o que esperar nos primeiros minutos.
 
-  lol pregame                                   lê a seleção de campeões do cliente (só GET) e imprime o plano
-  lol pregame --wait [--timeout 900]            espera a seleção ter os campeões inimigos e imprime uma vez
+  lol pregame                                   lê o jogo atual (só GET) e imprime o plano; a fonte é escolhida sozinha:
+                                                  jogo aberto (Live Client Data, porta 2999) > carregamento
+                                                  (/lol-gameflow/v1/session) > seleção de campeões (/lol-champ-select/v1/session)
+  lol pregame --wait [--timeout 900]            espera ter os 10 campeões (de qualquer fonte) e imprime uma vez
+  lol pregame --source selecao|carregamento|jogo  força uma fonte (para testar)
   lol pregame --ally "top=Darius,jungle=Cho'Gath,mid=Ahri,bot=Jinx,sup=Thresh" --enemy "Shaco,Akali,Yorick,Tristana,Lulu"
               [--side blue|red] [--me "Cho'Gath"] [--json]
 
+A resposta bruta de cada fonte fica em data/pregame/ultima-<fonte>.json (fora do git), para conferir o formato.
+No carregamento e no jogo aberto, quem leva Smite é o jungler (sem chute). Na seleção, só o seu time tem roles.
 Com um print da seleção: identifique os campeões na imagem e use --ally/--enemy (roles dos inimigos são inferidas
 pelas partidas coletadas). Nomes ignoram maiúsculas e pontuação (chogath == Cho'Gath).
 
@@ -29,7 +34,8 @@ from collections import Counter, defaultdict
 
 from pathlib import Path
 
-from common import DATA, LCU, LCUError, REPORTS, _norm, load_json, mmss, resolve_player
+from common import (DATA, LCU, LCUError, REPORTS, LiveClientError, _norm, live_client_get, load_json, me_ids, mmss,
+                    resolve_player, save_json)
 
 WP = DATA / "winprob"
 ROLES = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"]
@@ -238,7 +244,8 @@ def side_shares(d: dict) -> tuple[float, float]:
     return d.get("top", 0.0), d.get("bot", 0.0)
 
 
-def plan(ally: dict[str, int], enemy: dict[str, int], team: int | None, me_role: str, champs: dict[int, str]) -> dict:
+def plan(ally: dict[str, int], enemy: dict[str, int], team: int | None, me_role: str, champs: dict[int, str],
+         history: bool = True) -> dict:
     samples = load_samples()
     roles, strength = role_stats(samples)
     pats = {}
@@ -262,7 +269,7 @@ def plan(ally: dict[str, int], enemy: dict[str, int], team: int | None, me_role:
     ej_name = champs.get(ej_cid) if ej_cid else None
     pat = pats.get(ej_name) if ej_name else None
     my_cid = ally.get(me_role)
-    hist = my_history(my_cid, ej_cid, champs)
+    hist = my_history(my_cid, ej_cid, champs) if history else {"games": 0, "bySide": {}, "withChamp": None, "vsJungler": None}
     timers = timers_summary()
     out = {"team": team, "meRole": me_role, "me": champs.get(my_cid), "ally": {r: champs.get(c) for r, c in ally.items()},
            "enemy": {r: champs.get(c) for r, c in enemy.items()},
@@ -374,8 +381,9 @@ def top(d: dict, k: int = 2) -> str:
 # ============================================================================ saída
 def print_plan(p: dict) -> None:
     team = {100: "time azul", 200: "time vermelho"}.get(p["team"], "lado do mapa não informado (--side blue|red)")
-    print(f"Pré-jogo · você: {p['me'] or '?'} ({ROLE_PT.get(p['meRole'], p['meRole'])}) · {team}")
-    print("Seu time: " + ", ".join(f"{ROLE_PT[r]} {p['ally'][r]}" for r in ROLES if r in p["ally"]))
+    who = p.get("forPlayer") or "você"
+    print(f"Pré-jogo · {who}: {p['me'] or '?'} ({ROLE_PT.get(p['meRole'], p['meRole'])}) · {team} · fonte: {p.get('source', '?')}")
+    print((f"Time de {p['forPlayer']}: " if p.get("forPlayer") else "Seu time: ") + ", ".join(f"{ROLE_PT[r]} {p['ally'][r]}" for r in ROLES if r in p["ally"]))
     conf = p["enemyRoleConfidence"]
     print("Inimigo:  " + ", ".join(f"{ROLE_PT[r]} {p['enemy'][r]}" + ("?" if conf.get(r, 1) < 0.6 else "")
                                    for r in ROLES if r in p["enemy"]) + "   (? = role incerta)")
@@ -393,14 +401,18 @@ def print_plan(p: dict) -> None:
     for e in p["expect"]:
         print(f"   - {e}")
     h = p["history"]
-    print(f"\nSeu histórico ({h['games']} partidas em cache):")
+    if p.get("forPlayer"):
+        print(f"\nSem histórico: a partida é de {p['forPlayer']}, e o cache só tem as suas partidas.")
+        h = {"bySide": {}}
+    else:
+        print(f"\nSeu histórico ({h['games']} partidas em cache):")
     bs = h["bySide"]
-    if bs:
+    if bs and not p.get("forPlayer"):
         print("   - de jungle, começando (min 2-4) no lado " + "; ".join(
             f"{k}: {v['wins']}/{v['games']} vitórias ({pct(v['wins'] / v['games'])})" for k, v in sorted(bs.items())))
     for key, label in (("withChamp", "com"), ("vsJungler", "contra o jungle")):
         x = h.get(key)
-        if x and x["champion"]:
+        if x and x["champion"] and not p.get("forPlayer"):
             print(f"   - {label} {x['champion']}: {x['wins']}/{x['games']} vitórias" if x["games"] else f"   - {label} {x['champion']}: nenhuma partida")
     print(f"\nFontes: {p['samples']} partidas coletadas (lol winprob crawl), padrões de jungle (lol junglers), seu cache. "
           "Não considera composição, itens, runas nem o elo de cada jogador. Posições só a cada minuto.")
@@ -448,7 +460,8 @@ def page(p: dict, alias: str) -> str:
     team_txt = {100: "time azul", 200: "time vermelho"}.get(p["team"], "lado do mapa não informado")
     ej_label = f'{ej["champion"]} ~{ej["firstTakedown"].get("medianTime") or "?"}' if ej else ""
     B = []
-    head = f'Pré-jogo · {H(p["me"] or "?")} ({ROLE_PT.get(p["meRole"], p["meRole"])}) · {team_txt}'
+    who = f'{H(p["forPlayer"])}: ' if p.get("forPlayer") else ""
+    head = f'Pré-jogo · {who}{H(p["me"] or "?")} ({ROLE_PT.get(p["meRole"], p["meRole"])}) · {team_txt}'
     if rec:
         title = f"Comece pelo {rec}"
         camps = f'<p class="camps">{H(p["startCamps"])}</p>' if p.get("startCamps") else \
@@ -496,7 +509,7 @@ def page(p: dict, alias: str) -> str:
     def roster(d, conf=None):
         return "<ul>" + "".join(f'<li><span>{ROLE_PT[r]}</span>{H(d[r])}{"?" if conf and conf.get(r, 1) < 0.6 else ""}</li>'
                                 for r in ROLES if r in d) + "</ul>"
-    B.append(f'<section class="teams"><div><div class="eyebrow ally">Seu time</div>{roster(p["ally"])}</div>'
+    B.append(f'<section class="teams"><div><div class="eyebrow ally">{"Time de " + H(p["forPlayer"]) if p.get("forPlayer") else "Seu time"}</div>{roster(p["ally"])}</div>'
              f'<div><div class="eyebrow enemy">Inimigo</div>{roster(p["enemy"], p["enemyRoleConfidence"])}</div></section>')
 
     h = p["history"]
@@ -514,8 +527,9 @@ def page(p: dict, alias: str) -> str:
     base = f' Chance no minuto 0 (modelo, só pelo lado do mapa): {pct(p["baseChance"])}.' if p.get("baseChance") is not None else ""
     if p.get("timers", {}).get("dragão"):
         base += f' Dragão até ~{mmss(p["timers"]["dragão"])}, vastilarvas até ~{mmss(p["timers"].get("vastilarvas") or 0)}.'
-    B.append(f'<footer>Tendências de {p["samples"]} partidas do elo e do seu histórico, não previsão do que esse jogador vai '
-             f'fazer. Não considera composição, itens nem runas.{H(base)} Gerado em '
+    src = "do elo" if p.get("forPlayer") else "do elo e do seu histórico"
+    B.append(f'<footer>Tendências de {p["samples"]} partidas {src}, não previsão do que esse jogador vai '
+             f'fazer. Não considera composição, itens nem runas.{H(base)} Fonte: {H(p.get("source", "?"))}. Gerado em '
              f'{dt.datetime.now():%d/%m %H:%M} por <span class="mono">lol pregame</span>.</footer>')
     tpl = TEMPLATE.read_text(encoding="utf-8")
     return tpl.replace("{{TITLE}}", H(f"Pré-jogo · {alias}")).replace("{{BODY}}", "\n".join(B))
@@ -523,38 +537,194 @@ def page(p: dict, alias: str) -> str:
 
 def write_page(p: dict, path: Path) -> Path:
     me = DATA / "me.json"
-    alias = (load_json(me).get("alias") if me.exists() else None) or "você"
+    alias = p.get("forPlayer") or (load_json(me).get("alias") if me.exists() else None) or "você"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(page(p, alias), encoding="utf-8")
     return path
 
 
-# ============================================================================ cliente
-POS_IN = {"top": "TOP", "jungle": "JUNGLE", "middle": "MIDDLE", "bottom": "BOTTOM", "utility": "UTILITY"}
+# ============================================================================ jogo atual (só leitura)
+POS_IN = {"top": "TOP", "jungle": "JUNGLE", "middle": "MIDDLE", "mid": "MIDDLE", "bottom": "BOTTOM", "bot": "BOTTOM",
+          "utility": "UTILITY", "support": "UTILITY"}
+SMITE_IDS = {11}           # feitiço "Golpear" (Smite)
+INGAME_PHASES = {"GameStart", "InProgress", "Reconnect"}
+RAW = DATA / "pregame"
 
 
-def read_champ_select(lcu: LCU) -> dict | None:
-    """Sessão da seleção de campeões (só GET). None se o cliente não estiver na seleção."""
-    phase = lcu.get("/lol-gameflow/v1/gameflow-phase")
-    if phase != "ChampSelect":
-        return {"phase": phase}
-    ses = lcu.get("/lol-champ-select/v1/session") or {}
+def _pos(v) -> str | None:
+    return POS_IN.get(str(v or "").strip().lower())
+
+
+def _with_smite_as_jungle(team: list[tuple[str | None, int]], smite: set[int]) -> tuple[list, bool]:
+    """Quem leva Smite é o jungler (se for exatamente um no time e a role não vier preenchida)."""
+    js = [c for _, c in team if c in smite]
+    if len(js) != 1 or any(r == "JUNGLE" for r, _ in team):
+        return team, False
+    return [("JUNGLE" if c == js[0] else (r if r != "JUNGLE" else None), c) for r, c in team], True
+
+
+def parse_champ_select(ses: dict) -> dict:
+    """GET /lol-champ-select/v1/session. Inimigos sem role (o cliente não mostra); feitiços só do seu time."""
     me_cell = ses.get("localPlayerCellId")
-    my = ses.get("myTeam") or []
-    their = ses.get("theirTeam") or []
-    ally, me = [], None
+    my, their = ses.get("myTeam") or [], ses.get("theirTeam") or []
+    ally, me, smite = [], None, set()
     for m in my:
-        cid = m.get("championId") or m.get("championPickIntent") or 0
-        role = POS_IN.get((m.get("assignedPosition") or "").lower())
+        cid = int(m.get("championId") or m.get("championPickIntent") or 0)
+        role = _pos(m.get("assignedPosition"))
         if cid:
-            ally.append((role, int(cid)))
+            ally.append((role, cid))
+            if {m.get("spell1Id"), m.get("spell2Id")} & SMITE_IDS:
+                smite.add(cid)
         if m.get("cellId") == me_cell:
-            me = (role, int(cid) if cid else None)
+            me = cid or None
+    ally, _ = _with_smite_as_jungle(ally, smite)
     enemy = [(None, int(m["championId"])) for m in their if m.get("championId")]
-    team_raw = (my[0].get("team") if my else None)
-    team = {1: 100, 2: 200}.get(team_raw)
-    return {"phase": phase, "ally": ally, "enemy": enemy, "me": me, "team": team,
-            "complete": len(ally) == 5 and len(enemy) == 5}
+    team = {1: 100, 2: 200}.get(my[0].get("team")) if my else None
+    return {"source": "seleção de campeões", "ally": ally, "enemy": enemy, "me": me, "team": team,
+            "smiteEnemy": False, "complete": len(ally) == 5 and len(enemy) == 5}
+
+
+def parse_gameflow(ses: dict, my_ids: set[str]) -> dict:
+    """GET /lol-gameflow/v1/session durante o carregamento/partida: gameData.teamOne (azul) e teamTwo (vermelho),
+    e playerChampionSelections com os feitiços (Smite => jungler)."""
+    gd = ses.get("gameData") or {}
+    t1, t2 = gd.get("teamOne") or [], gd.get("teamTwo") or []
+    spells = {}
+    for pc in gd.get("playerChampionSelections") or []:
+        key = pc.get("puuid") or pc.get("summonerInternalName") or pc.get("championId")
+        spells[key] = {pc.get("spell1Id"), pc.get("spell2Id")}
+        if pc.get("championId"):
+            spells.setdefault(("cid", int(pc["championId"])), spells[key])
+
+    def side(rows):
+        out, smite = [], set()
+        for m in rows:
+            cid = int(m.get("championId") or 0)
+            if not cid:
+                continue
+            out.append((_pos(m.get("selectedPosition")), cid))
+            sp = spells.get(m.get("puuid")) or spells.get(m.get("summonerInternalName")) or spells.get(("cid", cid)) or set()
+            if sp & SMITE_IDS:
+                smite.add(cid)
+        team, fixed = _with_smite_as_jungle(out, smite)
+        return team, fixed
+
+    a, fa = side(t1)
+    b, fb = side(t2)
+    mine_in_two = any((m.get("puuid") or "") in my_ids for m in t2 if m.get("puuid"))
+    mine_in_one = any((m.get("puuid") or "") in my_ids for m in t1 if m.get("puuid"))
+    if not (mine_in_one or mine_in_two):
+        team = None
+    else:
+        team = 200 if mine_in_two else 100
+    ally, enemy, fe = (b, a, fa) if team == 200 else (a, b, fb)
+    me_row = next((m for m in t1 + t2 if (m.get("puuid") or "") in my_ids), None)
+    return {"source": "carregamento (gameflow)", "ally": ally, "enemy": enemy,
+            "me": int(me_row["championId"]) if me_row and me_row.get("championId") else None, "team": team,
+            "smiteEnemy": fe, "complete": len(ally) == 5 and len(enemy) == 5, "mapId": (gd.get("queue") or {}).get("mapId")}
+
+
+def parse_live(data: dict, alias_to_id: dict[str, int], champs: dict[int, str]) -> dict:
+    """GET https://127.0.0.1:2999/liveclientdata/allgamedata (jogo aberto, inclusive personalizada e treino)."""
+    players = data.get("allPlayers") or []
+    act = data.get("activePlayer") or {}
+    me_name = (act.get("riotId") or act.get("summonerName") or "").lower()
+
+    def cid_of(pl):
+        raw = str(pl.get("rawChampionName") or "")
+        alias = raw.rsplit("_", 1)[-1] if raw else ""
+        if alias and _norm(alias) in alias_to_id:
+            return alias_to_id[_norm(alias)]
+        try:
+            return champ_id(pl.get("championName") or "", champs)
+        except SystemExit:
+            return None
+
+    rows = {100: [], 200: []}
+    smite = {100: set(), 200: set()}
+    me, team = None, None
+    for pl in players:
+        t = {"ORDER": 100, "CHAOS": 200}.get(pl.get("team"))
+        cid = cid_of(pl)
+        if not t or not cid:
+            continue
+        rows[t].append((_pos(pl.get("position")), cid))
+        sp = pl.get("summonerSpells") or {}
+        raw = " ".join(str((sp.get(k) or {}).get("rawDisplayName") or "") for k in ("summonerSpellOne", "summonerSpellTwo"))
+        if "Smite" in raw:
+            smite[t].add(cid)
+        names = {str(pl.get(k) or "").lower() for k in ("riotId", "summonerName")} - {""}
+        if me_name and me_name in names:
+            me, team = cid, t
+    fixed = {}
+    for t in (100, 200):
+        rows[t], fixed[t] = _with_smite_as_jungle(rows[t], smite[t])
+    other = 200 if team == 100 else 100
+    ally, enemy = (rows[team], rows[other]) if team else (rows[100], rows[200])
+    return {"source": "jogo aberto (porta 2999)", "ally": ally, "enemy": enemy, "me": me, "team": team,
+            "smiteEnemy": fixed.get(other, False) if team else False,
+            "complete": len(ally) == 5 and len(enemy) == 5, "mapId": (data.get("gameData") or {}).get("mapNumber")}
+
+
+SECRET_KEYS = {"password", "spectatorKey", "encryptionKey", "observerEncryptionKey"}
+
+
+def _scrub(obj):
+    """Tira senha de sala personalizada e chaves de espectador antes de gravar a resposta bruta."""
+    if isinstance(obj, dict):
+        return {k: ("<removido>" if k in SECRET_KEYS else _scrub(v)) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_scrub(v) for v in obj]
+    return obj
+
+
+def _raw(name: str, obj) -> None:
+    obj = _scrub(obj)
+    try:
+        save_json(RAW / f"ultima-{name}.json", obj, indent=1)
+    except OSError:
+        pass
+
+
+def read_current(source: str, champs: dict[int, str]) -> dict:
+    """Lê o jogo atual pela melhor fonte disponível. Devolve {"ready": False, "why": ...} se não houver nada."""
+    alias_to_id = {}
+    pc = DATA / "static" / "champions.json"
+    if pc.exists():
+        alias_to_id = {_norm(c.get("alias") or ""): int(c["id"]) for c in load_json(pc) if 0 < int(c["id"]) < 10000}
+    if source in ("auto", "jogo"):
+        try:
+            d = live_client_get("allgamedata")
+            _raw("jogo", d)
+            r = parse_live(d or {}, alias_to_id, champs)
+            if r["ally"] or r["enemy"]:
+                return {"ready": True, **r}
+        except LiveClientError as e:
+            if source == "jogo":
+                return {"ready": False, "why": f"jogo aberto: {e}"}
+    try:
+        lcu = LCU()
+        phase = lcu.get("/lol-gameflow/v1/gameflow-phase")
+    except LCUError as e:
+        return {"ready": False, "why": f"cliente indisponível: {e}"}
+    if source in ("auto", "carregamento") and (phase in INGAME_PHASES or source == "carregamento"):
+        try:
+            ses = lcu.get("/lol-gameflow/v1/session") or {}
+            _raw("carregamento", ses)
+            r = parse_gameflow(ses, me_ids())
+            if r["ally"] or r["enemy"]:
+                return {"ready": True, "phase": phase, **r}
+        except LCUError as e:
+            if source == "carregamento":
+                return {"ready": False, "why": f"carregamento: {e}"}
+    if source in ("auto", "selecao") and (phase == "ChampSelect" or source == "selecao"):
+        try:
+            ses = lcu.get("/lol-champ-select/v1/session") or {}
+            _raw("selecao", ses)
+            return {"ready": True, "phase": phase, **parse_champ_select(ses)}
+        except LCUError as e:
+            return {"ready": False, "why": f"seleção de campeões: {e}"}
+    return {"ready": False, "why": f"o cliente não está na seleção nem numa partida (fase: {phase})"}
 
 
 def main() -> None:
@@ -563,8 +733,13 @@ def main() -> None:
     ap.add_argument("--ally", nargs="+", help='seu time: "top=Darius,jungle=Cho\'Gath,..." (roles opcionais)')
     ap.add_argument("--enemy", nargs="+", help='time inimigo: "Shaco,Akali,..." (roles opcionais, inferidas se faltarem)')
     ap.add_argument("--side", choices=["blue", "red", "azul", "vermelho"])
-    ap.add_argument("--me", help="seu campeão (padrão: o jungler do seu time)")
-    ap.add_argument("--wait", action="store_true", help="espera a seleção de campeões ter os 10 campeões")
+    ap.add_argument("--me", help="seu campeão (padrão: o da sua role mais comum)")
+    ap.add_argument("--for", dest="for_player", metavar="NOME",
+                    help="pré-jogo de outra pessoa (ex.: um amigo, pelo print): exige --ally/--enemy e --me com o "
+                         "campeão dela; sem o seu histórico; página em reports/pregame-<nome>.html")
+    ap.add_argument("--source", choices=["auto", "selecao", "carregamento", "jogo"], default="auto",
+                    help="de onde ler o jogo atual (padrão: a melhor disponível)")
+    ap.add_argument("--wait", action="store_true", help="espera ter os 10 campeões")
     ap.add_argument("--timeout", type=int, default=900)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--html", nargs="?", const=str(REPORTS / "pregame.html"), metavar="ARQUIVO",
@@ -573,56 +748,61 @@ def main() -> None:
     champs = champions()
     if not champs:
         raise SystemExit("Lista de campeões vazia: rode `lol static` com o cliente aberto.")
-    samples_ok = (WP / "samples.jsonl").exists()
-    if not samples_ok:
+    if not (WP / "samples.jsonl").exists():
         print("[aviso] sem data/winprob/samples.jsonl: rode `lol winprob crawl` para ter força de lane e padrões de jungle.",
               file=sys.stderr)
 
-    team, me_role, me_cid = None, "JUNGLE", None
+    if a.for_player and not (a.ally and a.enemy and a.me):
+        raise SystemExit("--for precisa de --ally, --enemy e --me (o campeão da pessoa), lidos do print.")
+    main_role = None if a.for_player else my_main_role()
+    team, me_cid, source = None, None, "campeões informados"
     if a.ally or a.enemy:
         if not (a.ally and a.enemy):
             raise SystemExit("Informe --ally e --enemy (5 campeões cada; roles opcionais).")
         ally_l, enemy_l = parse_team(a.ally, champs), parse_team(a.enemy, champs)
         team = {"blue": 100, "azul": 100, "red": 200, "vermelho": 200}.get(a.side or "")
-        main_role = my_main_role()
         if a.me:
             me_cid = champ_id(a.me, champs)
             if me_cid not in [c for _, c in ally_l]:
                 raise SystemExit(f"--me {a.me}: esse campeão não está em --ally.")
-            if not any(c == me_cid and r for r, c in ally_l) and main_role not in [r for r, _ in ally_l if r]:
-                ally_l = [(main_role if c == me_cid else r, c) for r, c in ally_l]
-        me_role = next((r for r, c in ally_l if c == me_cid and r), main_role)
     else:
-        try:
-            lcu = LCU()
-            t0 = time.time()
-            while True:
-                cs = read_champ_select(lcu)
-                if cs.get("phase") == "ChampSelect" and (cs["complete"] or not a.wait):
-                    break
-                if not a.wait:
-                    raise SystemExit(f"O cliente não está na seleção de campeões (fase: {cs.get('phase')}). "
-                                     "Use --wait para esperar, ou --ally/--enemy com os campeões de um print.")
-                if time.time() - t0 > a.timeout:
-                    raise SystemExit("Tempo esgotado esperando a seleção de campeões.")
-                time.sleep(3)
-        except LCUError as e:
-            raise SystemExit(f"Cliente indisponível: {e}") from None
-        ally_l, enemy_l, team = cs["ally"], cs["enemy"], cs["team"]
-        if cs["me"]:
-            me_role = cs["me"][0] or me_role
-            me_cid = cs["me"][1]
-        if len(enemy_l) < 5:
-            print(f"[aviso] só {len(enemy_l)} campeão(ões) inimigo(s) visível(is) até agora.", file=sys.stderr)
+        t0 = time.time()
+        while True:
+            cur = read_current(a.source, champs)
+            if cur["ready"] and (cur["complete"] or not a.wait):
+                break
+            if not a.wait:
+                raise SystemExit(f"Sem jogo atual para ler: {cur.get('why') or 'faltam campeões'}. "
+                                 "Use --wait para esperar, ou --ally/--enemy com os campeões de um print.")
+            if time.time() - t0 > a.timeout:
+                raise SystemExit("Tempo esgotado esperando o jogo atual.")
+            time.sleep(3)
+        if cur.get("mapId") not in (None, 11):
+            raise SystemExit(f"O pré-jogo é só para Summoner's Rift (mapa desta partida: {cur['mapId']}).")
+        ally_l, enemy_l, team, me_cid, source = cur["ally"], cur["enemy"], cur["team"], cur["me"], cur["source"]
+        if a.side:
+            team = {"blue": 100, "azul": 100, "red": 200, "vermelho": 200}[a.side]
+        if not cur["complete"]:
+            print(f"[aviso] só {len(ally_l)} aliado(s) e {len(enemy_l)} inimigo(s) até agora.", file=sys.stderr)
+    # o seu campeão sem role: vai na sua role mais comum, se ela estiver livre
+    if main_role and me_cid and not any(c == me_cid and r for r, c in ally_l) and main_role not in [r for r, _ in ally_l if r]:
+        ally_l = [(main_role if c == me_cid else r, c) for r, c in ally_l]
 
     roles, _ = role_stats(load_samples())
     ally = assign_roles([c for _, c in ally_l], roles, {c: r for r, c in ally_l if r})
     enemy = assign_roles([c for _, c in enemy_l], roles, {c: r for r, c in enemy_l if r})
-    ally_by_role = {r: c for c, r in ally.items()}
-    enemy_by_role = {r: c for c, r in enemy.items()}
-    if me_cid and me_cid in ally:
-        me_role = ally[me_cid]
-    p = plan(ally_by_role, enemy_by_role, team, me_role, champs)
+    me_role = ally.get(me_cid) if me_cid in ally else (main_role or "JUNGLE")
+    p = plan({r: c for c, r in ally.items()}, {r: c for c, r in enemy.items()}, team, me_role, champs,
+             history=not a.for_player)
+    p["source"] = source
+    if a.for_player:
+        p["forPlayer"] = a.for_player
+        if a.html == str(REPORTS / "pregame.html"):   # cada pessoa tem a sua página (e o seu link)
+            a.html = str(REPORTS / f"pregame-{_norm(a.for_player) or 'amigo'}.html")
+    # roles informadas pela fonte (ou Smite) não são "incertas"
+    for r, c in enemy_l:
+        if r:
+            p["enemyRoleConfidence"][r] = 1.0
     if a.html:
         print(f"[ok] página: {write_page(p, Path(a.html))}", file=sys.stderr)
     if a.json:

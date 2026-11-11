@@ -220,6 +220,41 @@ def test_data(fixture: dict | None = None) -> None:
     except Exception:
         ok = False
     check(ok, "lol pregame --json: 5 roles atribuídas em cada time")
+    # leitores do jogo atual com respostas simuladas no formato de cada fonte (sem cliente)
+    import pregame as pg
+    t_me = [p for p in s["participants"] if p["team"] == mine["team"]]
+    t_en = [p for p in s["participants"] if p["team"] != mine["team"]]
+    jg_en = next((p for p in t_en if p.get("role") == "JUNGLE"), t_en[1])
+    sel = {"localPlayerCellId": t_me.index(mine),
+           "myTeam": [{"cellId": i, "championId": p["championId"], "assignedPosition": "", "team": 1,
+                       "spell1Id": 11 if p is mine else 4, "spell2Id": 14} for i, p in enumerate(t_me)],
+           "theirTeam": [{"cellId": 5 + i, "championId": p["championId"]} for i, p in enumerate(t_en)]}
+    r1 = pg.parse_champ_select(sel)
+    check(r1["complete"] and r1["me"] == mine["championId"] and r1["team"] == 100
+          and ("JUNGLE", mine["championId"]) in r1["ally"], "pré-jogo: leitura da seleção de campeões (simulada)")
+    def gf_row(p, i):
+        return {"championId": p["championId"], "puuid": f"sim-{i}", "selectedPosition": "NONE"}
+    gf = {"gameData": {"queue": {"mapId": 11}, "teamOne": [gf_row(p, i) for i, p in enumerate(t_en)],
+                       "teamTwo": [gf_row(p, 5 + i) for i, p in enumerate(t_me)],
+                       "playerChampionSelections": [{"championId": p["championId"], "puuid": f"sim-{i}",
+                                                     "spell1Id": 11 if p in (mine, jg_en) else 4, "spell2Id": 14}
+                                                    for i, p in enumerate(t_en + t_me)]}}
+    r2 = pg.parse_gameflow(gf, {f"sim-{5 + t_me.index(mine)}"})
+    check(r2["complete"] and r2["team"] == 200 and r2["smiteEnemy"] and ("JUNGLE", jg_en["championId"]) in r2["enemy"],
+          "pré-jogo: leitura do carregamento (simulada; Smite marca o jungle inimigo)")
+    champs_all = pg.champions()
+    def lv(p, t):
+        smite = p in (mine, jg_en)
+        return {"championName": p["champion"], "rawChampionName": "game_character_displayname_" + pg._norm(p["champion"]),
+                "team": t, "position": "", "riotId": "Eu#BR1" if p is mine else f"x{p['pid']}#BR1",
+                "summonerSpells": {"summonerSpellOne": {"rawDisplayName": "GeneratedTip_SummonerSpell_Summoner"
+                                                        + ("Smite" if smite else "Flash") + "_DisplayName"},
+                                   "summonerSpellTwo": {"rawDisplayName": "GeneratedTip_SummonerSpell_SummonerFlash_DisplayName"}}}
+    live = {"activePlayer": {"riotId": "Eu#BR1"}, "gameData": {"mapNumber": 11},
+            "allPlayers": [lv(p, "ORDER") for p in t_me] + [lv(p, "CHAOS") for p in t_en]}
+    r3 = pg.parse_live(live, {}, champs_all)
+    check(r3["complete"] and r3["team"] == 100 and r3["me"] == mine["championId"] and r3["smiteEnemy"]
+          and ("JUNGLE", jg_en["championId"]) in r3["enemy"], "pré-jogo: leitura do jogo aberto (simulada)")
     hp = Path(tempfile.mkdtemp(prefix="lolcoach-pregame-")) / "pregame.html"
     r = run_lol("pregame", "--ally", ally, "--enemy", enemy, "--side", "blue", "--html", str(hp))
     page = hp.read_text(encoding="utf-8") if hp.exists() else ""
@@ -227,6 +262,11 @@ def test_data(fixture: dict | None = None) -> None:
     bad = [w for w in ("None", "undefined", "NaN", "{{") if w in visible or (w == "{{" and w in page)]
     check(r.returncode == 0 and "<title>Pré-jogo" in page and "<svg" in page and not bad,
           "lol pregame --html: página do celular" + (f" (achou {bad})" if bad else ""))
+    r = run_lol("pregame", "--for", "Amigo", "--ally", ally, "--enemy", enemy, "--me", t_me[0]["champion"],
+                "--html", str(hp.parent / "amigo.html"))
+    page = (hp.parent / "amigo.html").read_text(encoding="utf-8") if (hp.parent / "amigo.html").exists() else ""
+    check(r.returncode == 0 and "Pré-jogo · Amigo" in page and "Seu histórico" not in page and "Seu histórico" not in r.stdout,
+          "lol pregame --for: pré-jogo de outra pessoa, sem o seu histórico")
     shutil.rmtree(hp.parent, ignore_errors=True)
 
     import render as render_mod
