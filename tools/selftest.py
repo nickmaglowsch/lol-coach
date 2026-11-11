@@ -262,6 +262,11 @@ def test_data(fixture: dict | None = None) -> None:
     bad = [w for w in ("None", "undefined", "NaN", "{{") if w in visible or (w == "{{" and w in page)]
     check(r.returncode == 0 and "<title>Pré-jogo" in page and "<svg" in page and not bad,
           "lol pregame --html: página do celular" + (f" (achou {bad})" if bad else ""))
+    r = run_lol("pregame", "--for", "Amigo", "--ally", ally, "--enemy", enemy, "--me", t_me[0]["champion"],
+                "--html", str(hp.parent / "amigo.html"))
+    page = (hp.parent / "amigo.html").read_text(encoding="utf-8") if (hp.parent / "amigo.html").exists() else ""
+    check(r.returncode == 0 and "Pré-jogo · Amigo" in page and "Seu histórico" not in page and "Seu histórico" not in r.stdout,
+          "lol pregame --for: pré-jogo de outra pessoa, sem o seu histórico")
     shutil.rmtree(hp.parent, ignore_errors=True)
 
     import render as render_mod

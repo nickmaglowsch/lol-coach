@@ -244,7 +244,8 @@ def side_shares(d: dict) -> tuple[float, float]:
     return d.get("top", 0.0), d.get("bot", 0.0)
 
 
-def plan(ally: dict[str, int], enemy: dict[str, int], team: int | None, me_role: str, champs: dict[int, str]) -> dict:
+def plan(ally: dict[str, int], enemy: dict[str, int], team: int | None, me_role: str, champs: dict[int, str],
+         history: bool = True) -> dict:
     samples = load_samples()
     roles, strength = role_stats(samples)
     pats = {}
@@ -268,7 +269,7 @@ def plan(ally: dict[str, int], enemy: dict[str, int], team: int | None, me_role:
     ej_name = champs.get(ej_cid) if ej_cid else None
     pat = pats.get(ej_name) if ej_name else None
     my_cid = ally.get(me_role)
-    hist = my_history(my_cid, ej_cid, champs)
+    hist = my_history(my_cid, ej_cid, champs) if history else {"games": 0, "bySide": {}, "withChamp": None, "vsJungler": None}
     timers = timers_summary()
     out = {"team": team, "meRole": me_role, "me": champs.get(my_cid), "ally": {r: champs.get(c) for r, c in ally.items()},
            "enemy": {r: champs.get(c) for r, c in enemy.items()},
@@ -380,8 +381,9 @@ def top(d: dict, k: int = 2) -> str:
 # ============================================================================ saída
 def print_plan(p: dict) -> None:
     team = {100: "time azul", 200: "time vermelho"}.get(p["team"], "lado do mapa não informado (--side blue|red)")
-    print(f"Pré-jogo · você: {p['me'] or '?'} ({ROLE_PT.get(p['meRole'], p['meRole'])}) · {team} · fonte: {p.get('source', '?')}")
-    print("Seu time: " + ", ".join(f"{ROLE_PT[r]} {p['ally'][r]}" for r in ROLES if r in p["ally"]))
+    who = p.get("forPlayer") or "você"
+    print(f"Pré-jogo · {who}: {p['me'] or '?'} ({ROLE_PT.get(p['meRole'], p['meRole'])}) · {team} · fonte: {p.get('source', '?')}")
+    print((f"Time de {p['forPlayer']}: " if p.get("forPlayer") else "Seu time: ") + ", ".join(f"{ROLE_PT[r]} {p['ally'][r]}" for r in ROLES if r in p["ally"]))
     conf = p["enemyRoleConfidence"]
     print("Inimigo:  " + ", ".join(f"{ROLE_PT[r]} {p['enemy'][r]}" + ("?" if conf.get(r, 1) < 0.6 else "")
                                    for r in ROLES if r in p["enemy"]) + "   (? = role incerta)")
@@ -399,14 +401,18 @@ def print_plan(p: dict) -> None:
     for e in p["expect"]:
         print(f"   - {e}")
     h = p["history"]
-    print(f"\nSeu histórico ({h['games']} partidas em cache):")
+    if p.get("forPlayer"):
+        print(f"\nSem histórico: a partida é de {p['forPlayer']}, e o cache só tem as suas partidas.")
+        h = {"bySide": {}}
+    else:
+        print(f"\nSeu histórico ({h['games']} partidas em cache):")
     bs = h["bySide"]
-    if bs:
+    if bs and not p.get("forPlayer"):
         print("   - de jungle, começando (min 2-4) no lado " + "; ".join(
             f"{k}: {v['wins']}/{v['games']} vitórias ({pct(v['wins'] / v['games'])})" for k, v in sorted(bs.items())))
     for key, label in (("withChamp", "com"), ("vsJungler", "contra o jungle")):
         x = h.get(key)
-        if x and x["champion"]:
+        if x and x["champion"] and not p.get("forPlayer"):
             print(f"   - {label} {x['champion']}: {x['wins']}/{x['games']} vitórias" if x["games"] else f"   - {label} {x['champion']}: nenhuma partida")
     print(f"\nFontes: {p['samples']} partidas coletadas (lol winprob crawl), padrões de jungle (lol junglers), seu cache. "
           "Não considera composição, itens, runas nem o elo de cada jogador. Posições só a cada minuto.")
@@ -454,7 +460,8 @@ def page(p: dict, alias: str) -> str:
     team_txt = {100: "time azul", 200: "time vermelho"}.get(p["team"], "lado do mapa não informado")
     ej_label = f'{ej["champion"]} ~{ej["firstTakedown"].get("medianTime") or "?"}' if ej else ""
     B = []
-    head = f'Pré-jogo · {H(p["me"] or "?")} ({ROLE_PT.get(p["meRole"], p["meRole"])}) · {team_txt}'
+    who = f'{H(p["forPlayer"])}: ' if p.get("forPlayer") else ""
+    head = f'Pré-jogo · {who}{H(p["me"] or "?")} ({ROLE_PT.get(p["meRole"], p["meRole"])}) · {team_txt}'
     if rec:
         title = f"Comece pelo {rec}"
         camps = f'<p class="camps">{H(p["startCamps"])}</p>' if p.get("startCamps") else \
@@ -502,7 +509,7 @@ def page(p: dict, alias: str) -> str:
     def roster(d, conf=None):
         return "<ul>" + "".join(f'<li><span>{ROLE_PT[r]}</span>{H(d[r])}{"?" if conf and conf.get(r, 1) < 0.6 else ""}</li>'
                                 for r in ROLES if r in d) + "</ul>"
-    B.append(f'<section class="teams"><div><div class="eyebrow ally">Seu time</div>{roster(p["ally"])}</div>'
+    B.append(f'<section class="teams"><div><div class="eyebrow ally">{"Time de " + H(p["forPlayer"]) if p.get("forPlayer") else "Seu time"}</div>{roster(p["ally"])}</div>'
              f'<div><div class="eyebrow enemy">Inimigo</div>{roster(p["enemy"], p["enemyRoleConfidence"])}</div></section>')
 
     h = p["history"]
@@ -520,7 +527,8 @@ def page(p: dict, alias: str) -> str:
     base = f' Chance no minuto 0 (modelo, só pelo lado do mapa): {pct(p["baseChance"])}.' if p.get("baseChance") is not None else ""
     if p.get("timers", {}).get("dragão"):
         base += f' Dragão até ~{mmss(p["timers"]["dragão"])}, vastilarvas até ~{mmss(p["timers"].get("vastilarvas") or 0)}.'
-    B.append(f'<footer>Tendências de {p["samples"]} partidas do elo e do seu histórico, não previsão do que esse jogador vai '
+    src = "do elo" if p.get("forPlayer") else "do elo e do seu histórico"
+    B.append(f'<footer>Tendências de {p["samples"]} partidas {src}, não previsão do que esse jogador vai '
              f'fazer. Não considera composição, itens nem runas.{H(base)} Fonte: {H(p.get("source", "?"))}. Gerado em '
              f'{dt.datetime.now():%d/%m %H:%M} por <span class="mono">lol pregame</span>.</footer>')
     tpl = TEMPLATE.read_text(encoding="utf-8")
@@ -529,7 +537,7 @@ def page(p: dict, alias: str) -> str:
 
 def write_page(p: dict, path: Path) -> Path:
     me = DATA / "me.json"
-    alias = (load_json(me).get("alias") if me.exists() else None) or "você"
+    alias = p.get("forPlayer") or (load_json(me).get("alias") if me.exists() else None) or "você"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(page(p, alias), encoding="utf-8")
     return path
@@ -726,6 +734,9 @@ def main() -> None:
     ap.add_argument("--enemy", nargs="+", help='time inimigo: "Shaco,Akali,..." (roles opcionais, inferidas se faltarem)')
     ap.add_argument("--side", choices=["blue", "red", "azul", "vermelho"])
     ap.add_argument("--me", help="seu campeão (padrão: o da sua role mais comum)")
+    ap.add_argument("--for", dest="for_player", metavar="NOME",
+                    help="pré-jogo de outra pessoa (ex.: um amigo, pelo print): exige --ally/--enemy e --me com o "
+                         "campeão dela; sem o seu histórico; página em reports/pregame-<nome>.html")
     ap.add_argument("--source", choices=["auto", "selecao", "carregamento", "jogo"], default="auto",
                     help="de onde ler o jogo atual (padrão: a melhor disponível)")
     ap.add_argument("--wait", action="store_true", help="espera ter os 10 campeões")
@@ -741,7 +752,9 @@ def main() -> None:
         print("[aviso] sem data/winprob/samples.jsonl: rode `lol winprob crawl` para ter força de lane e padrões de jungle.",
               file=sys.stderr)
 
-    main_role = my_main_role()
+    if a.for_player and not (a.ally and a.enemy and a.me):
+        raise SystemExit("--for precisa de --ally, --enemy e --me (o campeão da pessoa), lidos do print.")
+    main_role = None if a.for_player else my_main_role()
     team, me_cid, source = None, None, "campeões informados"
     if a.ally or a.enemy:
         if not (a.ally and a.enemy):
@@ -772,15 +785,20 @@ def main() -> None:
         if not cur["complete"]:
             print(f"[aviso] só {len(ally_l)} aliado(s) e {len(enemy_l)} inimigo(s) até agora.", file=sys.stderr)
     # o seu campeão sem role: vai na sua role mais comum, se ela estiver livre
-    if me_cid and not any(c == me_cid and r for r, c in ally_l) and main_role not in [r for r, _ in ally_l if r]:
+    if main_role and me_cid and not any(c == me_cid and r for r, c in ally_l) and main_role not in [r for r, _ in ally_l if r]:
         ally_l = [(main_role if c == me_cid else r, c) for r, c in ally_l]
 
     roles, _ = role_stats(load_samples())
     ally = assign_roles([c for _, c in ally_l], roles, {c: r for r, c in ally_l if r})
     enemy = assign_roles([c for _, c in enemy_l], roles, {c: r for r, c in enemy_l if r})
-    me_role = ally.get(me_cid) if me_cid in ally else main_role
-    p = plan({r: c for c, r in ally.items()}, {r: c for c, r in enemy.items()}, team, me_role, champs)
+    me_role = ally.get(me_cid) if me_cid in ally else (main_role or "JUNGLE")
+    p = plan({r: c for c, r in ally.items()}, {r: c for c, r in enemy.items()}, team, me_role, champs,
+             history=not a.for_player)
     p["source"] = source
+    if a.for_player:
+        p["forPlayer"] = a.for_player
+        if a.html == str(REPORTS / "pregame.html"):   # cada pessoa tem a sua página (e o seu link)
+            a.html = str(REPORTS / f"pregame-{_norm(a.for_player) or 'amigo'}.html")
     # roles informadas pela fonte (ou Smite) não são "incertas"
     for r, c in enemy_l:
         if r:
