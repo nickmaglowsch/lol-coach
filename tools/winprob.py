@@ -2,7 +2,7 @@
 
 Uso:
   python tools/winprob.py crawl --max 1000 [--queue 420,440] [--per-player 10] [--depth 1]
-  python tools/winprob.py train [--holdout 0.2] [--l2 1.0] [--queue 420,440]
+  python tools/winprob.py train [--holdout 0.2] [--l2 100] [--cv 5] [--queue 420,440]
   python tools/winprob.py curve <gameId> [--team me|100|200] [--step 60]
   python tools/winprob.py state <gameId> <T> [--team me|100|200]
   python tools/winprob.py junglers [--champ Shaco] [--min-games 5] [--rebuild]
@@ -410,7 +410,8 @@ def enemy_jungle_compare(s: dict, team: int) -> dict | None:
 
 
 def win_curve(s, team: int = 100, step_ms: int = 60000) -> list:
-    """[(ts, p), ...] a cada step_ms até o fim (o último ponto é o fim da partida)."""
+    """[(ts, p), ...] a cada step_ms; o último ponto é o frame final (estimativa do modelo, que não vê o
+    nexus: pode divergir do resultado real; use s['winnerTeam'] para o desfecho)."""
     if not isinstance(s, dict):
         from summarize import get_summary
         s = get_summary(int(s))
@@ -658,6 +659,27 @@ def cmd_train(args) -> None:
     w = fit_logistic([r[0] for r in tr], [r[1] for r in tr], l2=args.l2)
     m_test = evaluate(w, te) if te else None
     m_train = evaluate(w, tr)
+    m_cv = None
+    if args.cv and args.cv > 1:
+        folds = defaultdict(list)
+        for r in games:
+            folds[zlib.crc32(str(r["gameId"]).encode()) % args.cv].append(r)
+        ll = acc = br = n = 0.0
+        for k in range(args.cv):
+            ftr = [row for j, gs in folds.items() if j != k for r in gs for row in game_rows(r, names)]
+            fte = [row for r in folds.get(k, []) for row in game_rows(r, names)]
+            if not ftr or not fte:
+                continue
+            fw = fit_logistic([r[0] for r in ftr], [r[1] for r in ftr], l2=args.l2, verbose=False)
+            fm = evaluate(fw, fte)
+            ll += fm["logLoss"] * fm["rows"]
+            acc += fm["accuracy"] * fm["rows"]
+            br += fm["brier"] * fm["rows"]
+            n += fm["rows"]
+        if n:
+            m_cv = {"folds": args.cv, "rows": int(n), "logLoss": round(ll / n, 4), "accuracy": round(acc / n, 4),
+                    "brier": round(br / n, 4)}
+            log(f"[train] validação cruzada ({args.cv} partes): log loss {m_cv['logLoss']}, acurácia {m_cv['accuracy']}")
     # modelo final: mesmo procedimento com todas as partidas
     allrows = tr + te
     w_all = fit_logistic([r[0] for r in allrows], [r[1] for r in allrows], l2=args.l2, verbose=False) if te else w
@@ -669,7 +691,7 @@ def cmd_train(args) -> None:
         "games": len(games), "gamesTrain": n_tr, "gamesTest": n_te,
         "patches": dict(Counter(r.get("patch") for r in games).most_common()),
         "blueWinRate": round(sum(r["win"] == 100 for r in games) / len(games), 4),
-        "metricsTest": m_test, "metricsTrain": {k: m_train[k] for k in ("rows", "logLoss", "accuracy", "brier")},
+        "metricsTest": m_test, "metricsCV": m_cv, "metricsTrain": {k: m_train[k] for k in ("rows", "logLoss", "accuracy", "brier")},
         "notes": "Perspectiva do time 100 (azul); label = azul venceu. Linhas = frames de minuto (sem o 0 e sem o final). "
                  "Split treino/teste por partida (crc32 do gameId). 'weights' = refeito com todas as partidas.",
     }
@@ -713,7 +735,7 @@ def cmd_curve(args) -> None:
     print("minuto\ttempo\tpTime\tdelta\touroTime\tabatesTime\ttorresTime\tdragõesTime")
     prev = None
     end = frames[-1][0]
-    ts_list = list(range(0, int(end), args.step * 1000)) + [end]
+    ts_list = list(range(0, int(end), args.step * 1000))
     sign = 1 if team == 100 else -1
     for ts in ts_list:
         st = _state(frames, events, ts)
@@ -722,6 +744,10 @@ def cmd_curve(args) -> None:
         print(f'{st["minute"]:.1f}\t{st["time"]}\t{p * 100:.1f}\t{d}\t{sign * st["gold"]:+d}\t'
               f'{sign * st["kills"]:+d}\t{sign * st["towers"]:+d}\t{sign * st["dragons"]:+d}')
         prev = p
+    # fim: o modelo não vê o nexus; mostra o resultado real (100 = venceu, 0 = perdeu)
+    st = _state(frames, events, end)
+    print(f'{st["minute"]:.1f}\t{st["time"]} (fim)\t{100.0 if s.get("winnerTeam") == team else 0.0:.1f}\t\t'
+          f'{sign * st["gold"]:+d}\t{sign * st["kills"]:+d}\t{sign * st["towers"]:+d}\t{sign * st["dragons"]:+d}')
     log(f"[curve] chance de vitória do time {team} (resultado real: venceu {s.get('winnerTeam')})")
 
 
@@ -878,7 +904,8 @@ def main() -> None:
     c.add_argument("--depth", type=int, default=1, help="0 = só jogadores das suas partidas; 1 = também os das novas")
     c = sub.add_parser("train", help="treina a regressão logística")
     c.add_argument("--holdout", type=float, default=0.2)
-    c.add_argument("--l2", type=float, default=1.0)
+    c.add_argument("--l2", type=float, default=100.0, help="penalidade L2 (soma; escolhida por validação cruzada)")
+    c.add_argument("--cv", type=int, default=5, help="validação cruzada em K partes por partida (0 = não)")
     c.add_argument("--queue", default="", help="filtra filas (ex.: 420,440)")
     c = sub.add_parser("curve", help="chance de vitória por minuto numa partida")
     c.add_argument("game")
