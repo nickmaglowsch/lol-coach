@@ -12,9 +12,11 @@ cmd="${1:-help}"; shift || true
 case "$cmd" in
   list|fetch|fetch-many|static|icons) exec "$PY" "$ROOT/tools/fetch.py" "$cmd" "$@" ;;
   summarize|sum)                exec "$PY" "$ROOT/tools/summarize.py" "$@" ;;
-  find|frames|events|at|series|players) exec "$PY" "$ROOT/tools/query.py" "$cmd" "$@" ;;
+  find|frames|events|at|series|players|games|lanes|paths|timers|decisions|fights|swings) exec "$PY" "$ROOT/tools/query.py" "$cmd" "$@" ;;
   where)                        exec "$PY" "$ROOT/tools/landmarks.py" "$@" ;;
   render)                       exec "$PY" "$ROOT/tools/render.py" "$@" ;;
+  spec|new)                     exec "$PY" "$ROOT/tools/scaffold.py" "$cmd" "$@" ;;
   validate)                     exec "$PY" "$ROOT/tools/zones.py" validate ;;
+  selftest)                     exec "$PY" "$ROOT/tools/selftest.py" ;;
   *) sed -n '/^## Ferramentas/,/^## /p' "$ROOT/CLAUDE.md" | head -60 ;;
 esac

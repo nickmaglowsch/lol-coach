@@ -27,7 +27,7 @@ Filosofia Unix: cada comando faz uma coisa; dados no **stdout** (TSV com cabeça
 | `lol icons [id…\|-]` | Baixa pela API local do cliente os retratos dos campeões das partidas (padrão: todas em cache) para `data/static/champion-icons/`. O `lol fetch` já faz isso sozinho. |
 | `... --source riot [--player "Nome#TAG"]` | Força a API oficial Match-V5 (precisa de `RIOT_API_KEY`). |
 | `lol summarize <id…\|latest\|-> [--focus P] [--quiet]` | Gera `data/summaries/<id>.json` e imprime o resumo legível (`--quiet`: só o caminho). |
-| `lol summarize --player "Nome#TAG" --games 10 [--queue 440]` | Padrões em várias partidas → `data/summaries/player-<nome>.json`. |
+| `lol summarize --player "Nome#TAG" --games 10 [--queue 440] [--ranked] [--role jungle] [--result win\|loss] [--since D] [--until D]` | Padrões em várias partidas (com filtros) → `data/summaries/player-<nome>.json`. |
 | `lol summarize --all` | Regenera todos os resumos (necessário quando `SUMMARY_VERSION` muda; o resto se regenera sozinho). |
 | `lol players <id>` | Participantes: role (+confiança), campeão, Riot ID, KDA, oponente de lane. |
 | `lol find [--enemy C]… [--ally C]… [--champ C]… [--queue Q] [--win\|--loss] [-p me]` | Partidas em cache que batem com os filtros (ex.: achar "a partida com Yorick e Akali"). |
@@ -35,9 +35,19 @@ Filosofia Unix: cada comando faz uma coisa; dados no **stdout** (TSV com cabeça
 | `lol events <id> [--type kill,objective,recall,purchase,ward] [-p P]… [--from T] [--to T]` | Eventos com local (zona + referência), participantes e quem estava perto (estimado). |
 | `lol at <id> <T> [-p P]… [--ref X,Y]` | Posição estimada de cada jogador no instante T (`state`: frame / kill / death / interp / morto) e distância a um ponto. |
 | `lol series <id> <team\|gold\|goldDiff\|cs\|csDiff\|xp\|xpDiff\|level\|zone> [-p P]` | Série por minuto (`team` = ouro do time do jogador − inimigo). |
+| `lol games [--ranked] [--queue Q] [--n N] [--since D] [--until D] [-p P]` | Uma linha por partida: resultado, mortes (antes dos 15, sem aliado perto), diffs @10/@15, ouro do time @10/15/20, maior vantagem e quando, dragões/ancião/barão/larvas/arauto, torres. |
+| `lol lanes [--ranked] [--queue Q] [--n N]` | Diff de ouro/CS @10/@15 de cada role do seu time contra o oponente direto, partida a partida. |
+| `lol paths [--ranked] [--from M] [--to M] [--since D] [--until D]` | Lado do mapa (dragão × barão) em cada minuto do início, primeiro dragão, dragões até 20:00, vastilarvas. |
+| `lol new <id\|latest…> [--tema T]` / `lol new --multi --tema T [filtros]` | Começa uma análise: baixa, resume e grava o esqueleto do spec em `reports/` (não sobrescreve; `--force`). Imprime o caminho. |
+| `lol spec <id> [--tema T]` / `lol spec --multi …` | Mesmo esqueleto, mas no stdout (para compor ou comparar). |
+| `lol swings <id> [--window 3] [--top 5]` | Maiores viradas do ouro do time (janelas sem sobreposição), com abates e objetivos de cada janela. |
+| `lol fights <id> [--gap 20] [--min 3]` | Lutas = abates em sequência (≤ gap s entre um e outro): horário, placar, local, objetivos em volta. |
+| `lol timers` | Horários dos objetivos inferidos do histórico: primeiro abate mais cedo (nasce até) e menor intervalo entre abates (renasce em), inclusive ancião depois da alma. |
+| `lol decisions <id> [-p P] [--kind lane,travessia,objetivo,ausente,recall,morte] [--json]` | Revisão de decisões: cada vez que o jogador foi para uma lane, atravessou o mapa, fez/perdeu objetivo, deu recall ou morreu, com o estado na hora (vida, mana, ouro no bolso, nível, lane de destino, jungle inimigo, objetivos vivos/nascendo), os sinais, o resultado na janela seguinte e um veredito boa/ruim/neutra **pelo resultado**. |
 | `lol where <x> <y>` | Zona + 3 referências mais próximas (torres exatas, campos aproximados). |
 | `lol render <spec.json>` / `lol render --example` | Gera `.md` + `.html` do relatório a partir do spec (seção 4). |
 | `lol validate` | Revalida a classificação de zonas contra o cache. |
+| `lol selftest` | Testa tudo sem rede: compila os módulos, procura sintaxe exclusiva do Python 3.12+, confere zonas, roda as consultas e renderiza relatórios de teste numa pasta temporária (com `node --check` no JavaScript, se houver Node). **Rode depois de mexer em `tools/`.** |
 
 Exemplos de composição:
 ```bash
@@ -48,7 +58,7 @@ Exemplos de composição:
 ./lol at <gameId> 15:31 --ref 12006,1562                                          # quem estava perto de um ponto
 ```
 
-Módulos: `common.py` (clientes LCU/Riot, helpers, `resolve_player`), `zones.py` (zonas), `landmarks.py` (torres/inibidores com coordenadas exatas tiradas dos eventos; campos aproximados), `positions.py` (posição estimada em qualquer instante usando frames + locais de kill como âncoras, sabendo quem está morto), `summarize.py`, `query.py`, `render.py` + `templates/report.html`.
+Módulos: `common.py` (clientes LCU/Riot, helpers, `resolve_player`), `zones.py` (zonas), `landmarks.py` (torres/inibidores com coordenadas exatas tiradas dos eventos; campos aproximados), `positions.py` (posição estimada em qualquer instante usando frames + locais de kill como âncoras, sabendo quem está morto), `decisions.py` (detecção e avaliação de decisões + horários dos objetivos inferidos), `summarize.py` (com cache dos resumos em memória por processo; trate o dict como somente leitura), `query.py`, `render.py` (uma partida) + `render_multi.py` (várias partidas), `report_parts.py` (blocos de HTML/Markdown comuns aos dois renders: cards, vereditos, seções, recomendações, limitações), `selftest.py`, `templates/report.html`.
 
 ### O que cada endpoint retornou de fato (testado em 2026-11-11, cliente patch 16.22, conta BR1)
 **LCU (API local do cliente)** — `https://127.0.0.1:<porta>`, Basic Auth `riot:<senha do lockfile>`;
@@ -61,16 +71,20 @@ lockfile em `C:\Riot Games\League of Legends\lockfile` (`nome:pid:porta:senha:pr
 - `GET /lol-game-data/assets/v1/{champion-summary,items,queues}.json` → OK (nomes em pt-BR), salvos em `data/static/`.
 - `GET /lol-match-history/v3/matchlist/...` → 404 (não existe).
 
-**Riot API oficial (fallback / dados ricos)** — roteamento `americas` para BR1; chave em `RIOT_API_KEY`.
+**Riot API oficial (fallback / dados ricos)** — roteamento `americas` para BR1; chave em `RIOT_API_KEY` ou no arquivo `riot_api_key.txt` na raiz (ignorado pelo git).
 - `match/v5/matches/by-puuid/{puuid}/ids?queue=&start=&count=`, `match/v5/matches/BR1_{gameId}`, `match/v5/matches/BR1_{gameId}/timeline`, `riot/account/v1/accounts/by-riot-id/{nome}/{tag}`.
-- **Ainda não testado com chave real** (não havia `RIOT_API_KEY` na criação). Quando for usado pela primeira vez, confirme e atualize esta seção.
+- **Testado em 2026-11-11 com chave de desenvolvimento:** status, account-v1, ids por PUUID, match e timeline funcionam.
+  - O Cloudflare da Riot recusa o User-Agent padrão do Python (HTTP 403, erro 1010): o cliente manda `User-Agent: lol-coach/0.1`.
+  - **O PUUID da API é criptografado por chave e é diferente do PUUID do cliente.** O fetch resolve o seu pelo Riot ID (account-v1) e guarda como `puuidApi` em `data/me.json`; `-p me` reconhece os dois.
+  - `championName` vem com nome interno ("Chogath", "MonkeyKing"); o resumo usa o nome em pt-BR do cliente pelo `championId`.
+  - Limite da chave de desenvolvimento: 20/s e 100 a cada 2 min. O cliente espaça as chamadas (1,25 s) e repete em 429; ~60 partidas levam uns 3 min.
 - A timeline Match-V5 traz também `WARD_PLACED`/`WARD_KILL` (sem posição), `ITEM_PURCHASED/SOLD/UNDO`, `LEVEL_UP`, `TURRET_PLATE_DESTROYED`, e `teamPosition` real. Arquivos ficam como `match_v5.json`/`timeline_v5.json` e o `summarize` os prefere automaticamente.
-- Como gerar a chave: entrar em https://developer.riotgames.com com a conta Riot → copiar a *Development API Key* (expira em 24h) → no PowerShell `$env:RIOT_API_KEY = 'RGAPI-...'` (só na sessão; nunca gravar em arquivo do projeto).
+- Como gerar a chave: o usuário entra em https://developer.riotgames.com com a conta Riot, resolve o reCAPTCHA e clica em *Regenerate API Key* (expira em 24h; o reCAPTCHA é sempre do usuário). Salve a chave sozinha em `riot_api_key.txt` (ignorado pelo git) ou use `$env:RIOT_API_KEY`. Nunca imprimir a chave.
 - Use a Riot API quando: precisar de mais de 20 partidas, de wards/itens por evento, ou o cliente estiver fechado.
 
 ### Resumo (`data/summaries/<gameId>.json`)
 - `participants[]`: pid, time, campeão, riotId, `role` + `roleSource` + `roleConfidence`, `laneOpponent`, `stats`, `aggregates` (tempo por zona, minutos/zonas das mortes, CS/ouro/XP e diffs @10/@15, participação em objetivos certa e estimada, KP, recalls inferidos).
-- `perMinute[]`: por frame (minuto i; último = fim) e para os 10 jogadores: zona, x/y, ouro, XP, CS, nível e `goldDiff/xpDiff/csDiff` vs oponente direto; totais por time e `teamDiff100` (azul − vermelho).
+- `perMinute[]`: por frame (minuto i; último = fim) e para os 10 jogadores: zona, x/y, ouro, ouro no bolso, XP, CS, nível, **vida e mana em % (só Match-V5)** e `goldDiff/xpDiff/csDiff` vs oponente direto; totais por time e `teamDiff100` (azul − vermelho).
 - `events.kills[]`: tempo, matador, vítima, assistências, posição, zona (relativa à vítima), aliados da vítima/inimigos extras perto (**estimado**).
 - `events.objectives[]`: dragões (tipo), vastilarvas, arauto, barão, torres, inibidores (e placas se Match-V5) com time, participantes certos e `nearbyEst` (≤2500 unidades, **estimado**).
 - `events.wards`: eventos (só Match-V5) + totais por jogador. `events.purchases`: itens (Match-V5) ou ouro gasto por minuto (LCU, `estimated: true`). `events.recalls`: voltas à base **inferidas**.
@@ -104,25 +118,32 @@ Todo relatório sai de **um único spec** `reports/<AAAA-MM-DD>-<gameId>-<tema>.
 O spec guarda só **julgamento** (resumo, vereditos, recomendações, quais minutos/lutas destacar); todo **dado** (ouro, posições, kills, objetivos, zonas) é lido do resumo da partida pelo `render`, então o relatório não diverge dos dados. Não escreva o `.md` nem o `.html` à mão.
 
 Pipeline de uma análise:
-1. `lol fetch …` → `lol summarize <id>` (conferir com `lol players <id>` se a partida bate com as alegações; ver §6).
-2. Investigar com `lol frames/events/at/series/where`.
-3. Escrever o spec (`lol render --example` mostra todos os campos). Campos principais:
+1. **`lol new <id|latest|latest-flex|latest-solo> [--tema review]`**: baixa, resume e grava `reports/<data>-<id>-<tema>.json` com um **esqueleto**: maiores viradas de ouro (faixas/anotações do gráfico), as 2 maiores lutas, faixa/caminho do jungle, a lane do time mais atrás aos 15:00 e as decisões com mais sinais (`decisions.pick` + `notes` em TODO). Todo o julgamento fica em `TODO: …`. Confira com `lol players <id>` se a partida bate com as alegações (§6). Várias partidas: `lol new --multi --tema <tema> [--ranked] [--role R] [--since D] [--until D]`.
+2. **Investigar**, nesta ordem:
+   - `lol swings <id>`: onde o ouro virou (janelas de 3 min, com abates e objetivos);
+   - `lol fights <id>`: as lutas (placar, local, objetivos em volta);
+   - `lol decisions <id>`: as decisões com estado, sinais e resultado. **É a parte mais importante para o usuário** ("às 14:00 você foi bot e não devia", com o porquê);
+   - detalhes com `lol frames/events/at/series/where`.
+3. **Preencher o spec**: trocar todos os `TODO` (título, resumo, vereditos, recomendações, comentários das decisões e legendas das lutas); ajustar `decisions.pick` se outro momento for mais instrutivo. `lol render --example` mostra todos os campos. Campos principais:
    - `tldr` (≤5 itens, viram cards; prefira `{"title": "O pico", "text": "..."}` com título curto), `note` (aviso opcional no topo), `timeline` (linhas `[tempo, evento, dado]`; se faltar, é gerada dos eventos);
    - `verdicts[]`: `q`, `verdict` ∈ SUPORTADO / REFUTADO / INCONCLUSIVO / MISTO, `label` opcional, `points` (cada ponto com minuto, o render avisa se faltar);
    - visuais opcionais: `gold` (faixas e anotações), `strip` (zona do jogador por minuto), `pathMap` (caminho foco × oponente), `laneChart` (diff de ouro de uma role), `fights[]` (mapa da luta + sequência automática), `objectives` (rótulos), `sections[]` (seções extras);
    - `replay` (**ligado por padrão** em Summoner's Rift): replay interativo com mapa dos 10 jogadores (fundo = minimapa oficial em `tools/templates/assets/sr_minimap_512.png`, da League of Legends Wiki, embutido na página; se faltar, cai num desenho vetorial; por cima: torres reais, rio, fossos, campos da jungle, torres/inibidores/nexus caindo no horário real; inibidor volta em 5 min), **retratos dos campeões** no lugar das bolinhas (checkbox; mortos em cinza, foco com aro dourado; também nos mapas das lutas), placar de abates, ouro, dragões/barões/torres por time, feed de eventos, **waves de minions simuladas pelas regras** (checkbox; não são dados, a página avisa) e uma linha do tempo embaixo (ouro do time, marcas de kills e objetivos, slider, play 10×/30×/60× e atalhos). Opções: `{"start": "15:00", "jumps": [["15:31", "Luta do bot"]]}`; os atalhos das `fights` e dos objetivos épicos entram sozinhos; `"replay": false` desliga. Posições entre os registros de minuto são estimadas (`positions.py`), e a página avisa isso;
+   - `decisions` (**ligado por padrão** em Summoner's Rift): seção "Revisão de decisões" com cards (na hora / sinais / resultado / veredito) e atalhos no replay. `{"pick": ["14:00", ...], "notes": {"14:00": "comentário"}, "max": 10}`; sem `pick`, entram os momentos com sinais ou grande impacto; `"decisions": false` desliga. Nos `notes`, separe dado de **Leitura:** (hipótese) e lembre que o veredito é pelo resultado;
    - `recs` (**máx. 3**, o render recusa mais), `limitations` extras.
    Markup: `**negrito**`; horários como `15:31` viram `<time>` sozinhos.
-4. `lol render reports/<…>.json` → escreve `<…>.md` (relatório completo) e `<…>.html` (página visual).
+4. `lol render reports/<…>.json` → escreve `<…>.md` e `<…>.html`. **O render recusa spec com `TODO`** (para não publicar rascunho); `--draft` gera só para pré-visualizar. Depois de mexer em `tools/`, rode `lol selftest`.
 5. **Publicar o `.html` como Claude Artifact** (ferramenta Artifact, `file_path` = o `.html`, ícone `chart` na primeira vez) e gravar a URL no campo `artifactUrl` do spec; renderizar de novo para o `.md` linkar a versão visual. Republicar o **mesmo caminho** mantém o link. Se o artifact já estiver compartilhado, avise o usuário de que quem tem o link verá a atualização.
 6. Responder ao usuário com o link do artifact e um resumo curto dos vereditos.
+
+**Várias partidas** (tipos c, d, e): spec com `"mode": "multi"` em `reports/<AAAA-MM-DD>-multi-<tema>.json`, com `focus`, `alias`, `ranked`/`queue`/`n` e `highlight` (`{"<gameId>": "rótulo"}` para destacar partidas no gráfico). Filtros da visão principal: `role`, `since`, `until`. O render gera curvas de ouro de todas as partidas sobrepostas, mortes por faixa de minuto e tabela por partida. `compare` (lista de grupos `{"label", "since"/"until"/"result"/"role"/"queue"}`) gera uma tabela com as mesmas métricas por grupo, usando o histórico inteiro (ex.: antes × depois, vitórias × derrotas). Investigue com `lol games` e `lol lanes`; nesse modo cada ponto de veredito precisa de minuto **ou** de contagem.
 
 Conteúdo obrigatório (o template já organiza): resumo em 5 linhas; linha do tempo; resposta a cada pergunta/alegação com veredito e evidência por minuto; no máximo 3 recomendações acionáveis e mensuráveis; limitações.
 **Aliados aparecem sempre pelo nick** (gameName do Riot ID, sem a tag), a pedido do usuário: o render faz isso sozinho e, na lista do time, mostra `nick (Campeão)`. Nos textos do spec, escreva os aliados como `nick (Campeão)` (ex.: `fulano (Vladimir)`); campos estruturais (`deathsOf`, `arrows`, `focus`) continuam aceitando o campeão. Inimigos continuam pelo campeão (sem Riot ID). `aliases` no spec troca um nick por apelido (chave: Riot ID, nick ou campeão); `"allyNames": "champion"` desliga. Use linguagem neutra para aliados: um nick não diz o gênero da pessoa (escreva "tinha morrido", não "estava morta").
 
 ## 5. Tipos de análise suportados
-- **(a) Partida + perguntas/alegações** ("o jungle não ganko a bot?"): `lol fetch <id>` → `lol summarize <id>` → checar cada alegação com `lol events/frames/at` → spec → `lol render` → artifact.
-- **(b) Review geral de uma partida**: lane phase (diffs @5/@10/@15 vs oponente), mortes (zona, aliados perto, minuto), objetivos (presença certa/estimada), recalls, visão.
+- **(a) Partida + perguntas/alegações** ("o jungle não ganko a bot?"): `lol new <id>` → `lol swings/fights/decisions` → checar cada alegação com `lol events/frames/at` → preencher o spec → `lol render` → artifact.
+- **(b) Review geral de uma partida**: lane phase (diffs @5/@10/@15 vs oponente), mortes (zona, aliados perto, minuto), objetivos (presença certa/estimada), recalls, visão — e **sempre a revisão de decisões** (`lol decisions`), que é o que o usuário mais valoriza: dizer "às 14:00 você foi bot com 64% de vida, 1.945 no bolso e a lane 2 níveis atrás", e não só métricas agregadas.
 - **(c) Padrões do jogador em várias partidas**: `fetch-many` → `summarize --player "Nome#TAG" --games N [--queue Q]` → zona, mortes por minuto/zona, CS@10/@15, diff de ouro, participação em objetivos.
 - **(d) Comparação de partidas (vitórias × derrotas)**: usar `perGame` do agregado + resumos individuais; comparar métricas iguais entre os grupos e dizer se a amostra é pequena demais.
 - **(e) Análise livre** ("olha as minhas últimas N e me diga o que mais me prejudica"): você escolhe as métricas, ranqueia os fatores pelo impacto observado e mostra a evidência de cada um; mesmo formato de relatório.

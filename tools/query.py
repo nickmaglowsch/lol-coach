@@ -12,6 +12,13 @@ Tempos aceitam "15:31", "15" (minuto) ou milissegundos.
   lol events <gid> [--type kill,objective,recall,purchase,ward] [-p P]... [--from T] [--to T]
   lol at <gid> <T> [-p P]... [--ref X,Y]               posição interpolada de cada jogador no instante T
   lol series <gid> <métrica> [-p P]                    série por minuto: team|gold|goldDiff|cs|csDiff|xp|xpDiff|level|zone
+  lol games [-p me] [--queue Q] [--n N] [--ranked]      uma linha por partida: resultado, mortes, diffs, ouro do time, objetivos
+  lol lanes [-p me] [--queue Q] [--n N] [--ranked]      diff de ouro/CS de cada role do seu time contra o oponente direto
+  lol paths [-p me] [--from M] [--to M] [--ranked]      lado do mapa em cada minuto do início (lado do dragão × lado do barão) e o que veio depois
+  lol timers                                            horários dos objetivos inferidos do seu histórico (nasce até / renasce em)
+  lol fights <gid> [--gap 20] [--min 3]                 lutas: abates em sequência (intervalo <= gap s), placar, local, objetivos em volta
+  lol swings <gid> [--window 3] [--top 5]               maiores viradas de ouro do time em janelas de N minutos, com o que aconteceu
+  lol decisions <gid> [-p me] [--kind lane,travessia,objetivo,ausente,recall,morte]   revisão de decisões com estado e resultado
 
 Exemplos de composição:
   lol find --enemy Yorick --enemy Akali --queue 440 --no-header | cut -f1
@@ -22,6 +29,7 @@ Exemplos de composição:
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import math
 import sys
@@ -210,6 +218,222 @@ def cmd_series(a, out: Out) -> None:
         out.row({"minute": r["minute"], a.metric: v})
 
 
+RANKED = {420, 440}
+EPIC_COUNT = {"DRAGON": "drag", "BARON_NASHOR": "baron", "RIFTHERALD": "herald", "HORDE": "grubs"}
+
+
+def my_games(a) -> list[tuple[dict, dict]]:
+    """(resumo, jogador) das partidas em cache do jogador, mais recentes primeiro (só Summoner's Rift, sem remakes)."""
+    rows = []
+    for gid in cached_ids():
+        s = get_summary(gid)
+        if s["mapId"] != 11 or (s["duration"] or 0) < 300:
+            continue
+        if a.queue is not None and s["queueId"] != a.queue:
+            continue
+        if a.ranked and s["queueId"] not in RANKED:
+            continue
+        if getattr(a, "since", None) and s["date"][:10] < a.since:
+            continue
+        if getattr(a, "until", None) and s["date"][:10] > a.until:
+            continue
+        p = resolve_player(s["participants"], a.player)
+        if p:
+            rows.append((s, p))
+    rows.sort(key=lambda r: r[0]["gameCreation"] or 0, reverse=True)
+    return rows[:a.n] if a.n else rows
+
+
+def _team_series(s: dict, team: int) -> list[int]:
+    sign = -1 if team == 200 else 1
+    return [sign * r["teamDiff100"]["gold"] for r in s["perMinute"]]
+
+
+def cmd_games(a, out: Out) -> None:
+    for s, p in my_games(a):
+        team, ag, st = p["team"], p["aggregates"], p["stats"]
+        ts = _team_series(s, team)
+        at = lambda m: ts[min(m, len(ts) - 1)] if len(ts) > m else None
+        imax = max(range(len(ts)), key=lambda i: ts[i]); imin = min(range(len(ts)), key=lambda i: ts[i])
+        obj = {}
+        for o in s["events"]["objectives"]:
+            k = EPIC_COUNT.get(o["type"])
+            if not k or o["killerTeam"] not in (100, 200):
+                continue
+            if o["type"] == "DRAGON" and "ancião" in o["name"]:
+                k = "elder"
+            side = "a" if o["killerTeam"] == team else "e"
+            obj[(k, side)] = obj.get((k, side), 0) + 1
+        towers = {sd: sum(1 for o in s["events"]["objectives"] if o["type"] == "TOWER" and o["killerTeam"] in (100, 200)
+                          and (("a" if o["killerTeam"] == team else "e") == sd)) for sd in ("a", "e")}
+        my_deaths = [k for k in s["events"]["kills"] if k["victim"] == p["pid"]]
+        out.row({"gameId": s["gameId"], "date": s["date"][:16], "queue": s["queue"], "champion": p["champion"],
+                 "role": ROLE_PT.get(p.get("role", ""), "?"), "win": st["win"], "min": round(s["duration"] / 60),
+                 "kda": f'{st["kills"]}/{st["deaths"]}/{st["assists"]}', "deaths": st["deaths"],
+                 "deathsTo15": sum(1 for k in my_deaths if k["ts"] < 900000),
+                 "deathsAloneEst": sum(1 for k in my_deaths if not k["alliesOfVictimNearEst"]),
+                 "deathsEnemyHalf": sum(1 for k in my_deaths if k["zoneForVictim"] in ("jungle_enemy", "base_enemy")),
+                 "cs10": ag["cs10"], "gd10": ag["goldDiff10"], "gd15": ag["goldDiff15"],
+                 "kp": ag["killParticipation"],
+                 "team10": at(10), "team15": at(15), "team20": at(20),
+                 "teamMax": ts[imax], "teamMaxMin": imax, "teamMin": ts[imin], "teamMinMin": imin,
+                 "drag": f'{obj.get(("drag", "a"), 0)}-{obj.get(("drag", "e"), 0)}',
+                 "elder": f'{obj.get(("elder", "a"), 0)}-{obj.get(("elder", "e"), 0)}',
+                 "baron": f'{obj.get(("baron", "a"), 0)}-{obj.get(("baron", "e"), 0)}',
+                 "grubs": f'{obj.get(("grubs", "a"), 0)}-{obj.get(("grubs", "e"), 0)}',
+                 "herald": f'{obj.get(("herald", "a"), 0)}-{obj.get(("herald", "e"), 0)}',
+                 "towers": f'{towers["a"]}-{towers["e"]}',
+                 "objPartCert": f'{ag["objParticipationCertain"]}/{ag["teamEpicObjectives"]}'})
+
+
+def cmd_lanes(a, out: Out) -> None:
+    for s, me in my_games(a):
+        for p in [q for q in s["participants"] if q["team"] == me["team"]]:
+            v10 = next((r["players"][str(p["pid"])] for r in s["perMinute"] if r["minute"] == 10), {})
+            v15 = next((r["players"][str(p["pid"])] for r in s["perMinute"] if r["minute"] == 15), {})
+            out.row({"gameId": s["gameId"], "win": me["stats"]["win"], "role": ROLE_PT.get(p.get("role", ""), "?"),
+                     "roleConf": p.get("roleConfidence"), "player": p["riotId"].split("#")[0], "champion": p["champion"],
+                     "me": p is me, "gd10": v10.get("goldDiff"), "gd15": v15.get("goldDiff"), "csd15": v15.get("csDiff"),
+                     "deaths": p["stats"]["deaths"],
+                     "deathsTo15": sum(1 for k in s["events"]["kills"] if k["victim"] == p["pid"] and k["ts"] < 900000)})
+
+
+def cmd_paths(a, out: Out) -> None:
+    """Lado do mapa do jogador nos minutos [from, to]: 'bot' = metade do dragão (y - x < -1200),
+    'top' = metade do barão/vastilarvas (y - x > 1200), 'centro' = faixa da mid/rio central, 'base'."""
+    from zones import zone_abs
+    lo, hi = a.from_, a.to
+    for s, p in my_games(a):
+        cnt = Counter()
+        for r in s["perMinute"]:
+            if lo <= r["minute"] <= hi:
+                v = r["players"][str(p["pid"])]
+                if v["x"] is None:
+                    continue
+                z = zone_abs(v["x"], v["y"])
+                cnt["base" if z.startswith("base") else "top" if v["y"] - v["x"] > 1200 else "bot" if v["y"] - v["x"] < -1200 else "centro"] += 1
+        team = p["team"]
+        drags = [o for o in s["events"]["objectives"] if o["type"] == "DRAGON" and o["killerTeam"] in (100, 200)]
+        grubs = [o for o in s["events"]["objectives"] if o["type"] == "HORDE" and o["killerTeam"] in (100, 200)]
+        side = "bot" if cnt["bot"] > cnt["top"] else "top" if cnt["top"] > cnt["bot"] else "empate"
+        t15 = next((r["teamDiff100"]["gold"] * (-1 if team == 200 else 1) for r in s["perMinute"] if r["minute"] == 15), None)
+        out.row({"gameId": s["gameId"], "win": p["stats"]["win"], "role": ROLE_PT.get(p.get("role", ""), "?"),
+                 "champion": p["champion"], "bot": cnt["bot"], "top": cnt["top"], "centro": cnt["centro"], "base": cnt["base"],
+                 "side": side,
+                 "firstDragon": ("nosso " if drags and drags[0]["killerTeam"] == team else "inimigo ") + drags[0]["time"] if drags else "",
+                 "dragTo20": f'{sum(1 for o in drags if o["ts"] < 1200000 and o["killerTeam"] == team)}-{sum(1 for o in drags if o["ts"] < 1200000 and o["killerTeam"] != team)}',
+                 "grubs": f'{sum(1 for o in grubs if o["killerTeam"] == team)}-{sum(1 for o in grubs if o["killerTeam"] != team)}',
+                 "gd15": p["aggregates"]["goldDiff15"], "team15": t15})
+
+
+def all_summaries() -> list[dict]:
+    return [get_summary(g) for g in cached_ids()]
+
+
+def fights_of(s: dict, team: int, gap_s: int = 20, min_kills: int = 3) -> list[dict]:
+    """Agrupa abates em lutas: sequência com intervalo <= gap_s entre abates seguidos."""
+    from landmarks import describe
+    P = {p["pid"]: p for p in s["participants"]}
+    ks = sorted((k for k in s["events"]["kills"] if k["x"] is not None), key=lambda k: k["ts"])
+    groups, cur = [], []
+    for k in ks:
+        if cur and k["ts"] - cur[-1]["ts"] > gap_s * 1000:
+            groups.append(cur); cur = []
+        cur.append(k)
+    if cur:
+        groups.append(cur)
+    out = []
+    for g in groups:
+        if len(g) < min_kills:
+            continue
+        t0, t1 = g[0]["ts"], g[-1]["ts"]
+        ours = sum(1 for k in g if P.get(k["victim"], {}).get("team") not in (team, None))
+        cx, cy = sum(k["x"] for k in g) / len(g), sum(k["y"] for k in g) / len(g)
+        objs = [o for o in s["events"]["objectives"] if t0 - 30000 <= o["ts"] <= t1 + 60000 and o["killerTeam"] in (100, 200)
+                and o["type"] != "TURRET_PLATE"]
+        out.append({"from": mmss(t0), "to": mmss(t1), "kills": len(g), "ours": ours, "theirs": len(g) - ours,
+                    "where": describe(cx, cy) if s["mapId"] == 11 else "",
+                    "zone": zone_rel(cx, cy, team) if s["mapId"] == 11 else "",
+                    "objectives": [("+" if o["killerTeam"] == team else "-") + o["name"] for o in objs],
+                    "fromMs": t0, "toMs": t1})
+    return out
+
+
+def swings_of(s: dict, team: int, window: int = 3, top: int = 5) -> list[dict]:
+    """Maiores variações do ouro do time em janelas de `window` minutos (sem sobrepor)."""
+    pm = s["perMinute"]
+    sign = -1 if team == 200 else 1
+    g = [sign * r["teamDiff100"]["gold"] for r in pm]
+    cand = sorted(((g[i + window] - g[i], i) for i in range(len(g) - window)), key=lambda t: -abs(t[0]))
+    chosen = []
+    for d, i in cand:
+        if any(abs(i - j) < window for _, j in chosen):
+            continue
+        chosen.append((d, i))
+        if len(chosen) >= top:
+            break
+    P = {p["pid"]: p for p in s["participants"]}
+    out = []
+    for d, i in sorted(chosen, key=lambda t: t[1]):
+        t0, t1 = pm[i]["ts"], pm[i + window]["ts"]
+        ks = [k for k in s["events"]["kills"] if t0 <= k["ts"] <= t1]
+        ours = sum(1 for k in ks if P.get(k["victim"], {}).get("team") not in (team, None))
+        objs = [("+" if o["killerTeam"] == team else "-") + o["name"] for o in s["events"]["objectives"]
+                if t0 <= o["ts"] <= t1 and o["killerTeam"] in (100, 200) and o["type"] != "TURRET_PLATE"]
+        out.append({"from": pm[i]["time"], "to": pm[i + window]["time"], "goldFrom": g[i], "goldTo": g[i + window],
+                    "delta": d, "kills": f"{ours}x{len(ks) - ours}", "objectives": objs,
+                    "fromMin": i, "toMin": i + window})
+    return out
+
+
+def cmd_fights(a, out: Out) -> None:
+    s = load(a.gid)
+    p = resolve_player(s["participants"], a.player[0] if a.player else "me") or s["participants"][0]
+    for f in fights_of(s, p["team"], a.gap, a.min):
+        f.pop("fromMs"); f.pop("toMs")
+        out.row(f)
+
+
+def cmd_swings(a, out: Out) -> None:
+    s = load(a.gid)
+    p = resolve_player(s["participants"], a.player[0] if a.player else "me") or s["participants"][0]
+    for w in swings_of(s, p["team"], a.window, a.top):
+        w.pop("fromMin"); w.pop("toMin")
+        out.row(w)
+
+
+def cmd_timers(a, out: Out) -> None:
+    from decisions import infer_timers
+    for k, v in sorted(infer_timers(all_summaries()).items(), key=lambda kv: kv[1]["first"]):
+        out.row({"objetivo": k, "primeiroAbateMaisCedo": mmss(v["first"]),
+                 "menorIntervaloEntreAbates": mmss(v["respawn"]) if v["respawn"] else "", "partidas": v["games"]})
+
+
+def cmd_decisions(a, out: Out) -> None:
+    from decisions import infer_timers, review
+    s = load(a.gid)
+    p = resolve_player(s["participants"], a.player[0] if a.player else "me")
+    if not p:
+        raise SystemExit("Jogador não encontrado; use -p.")
+    P = {q["pid"]: q for q in s["participants"]}
+    kinds = set(a.kind.split(",")) if a.kind else None
+    for d in review(s, p, infer_timers(all_summaries()), lambda pid: P[pid]["champion"] if pid in P else "minion/torre"):
+        if kinds and d["kind"] not in kinds:
+            continue
+        r = d["result"]
+        if a.json:
+            out.row(d)
+            continue
+        out.row({"time": d["time"], "kind": d["kind"], "what": d["what"],
+                 "hp": d["state"]["hp"], "bolso": d["state"]["bolso"], "nivel": d["state"]["nivel"],
+                 "lane(nível;vida)": f'{d["lane"]["nivel"]};{d["lane"]["vida"]}' if d["lane"] else "",
+                 "jgInimigo": f'{d["enemyJungle"]["zona"]} ~{d["enemyJungle"]["dist"]}' if d["enemyJungle"] else "",
+                 "vivos": d["alive"], "sinais": d["signals"], "janela": d["window"],
+                 "abates": f'{r["abatesNossos"]}x{r["abatesDeles"]} (você em {r["comVoce"]})',
+                 "objetivos": "+" + ",".join(r["objetivosNossos"]) + " -" + ",".join(r["objetivosDeles"]),
+                 "ouroTime": r["ouroTime"], "veredito": d["verdict"]})
+
+
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     common = argparse.ArgumentParser(add_help=False)
@@ -224,6 +448,20 @@ def main() -> None:
     sp.add_argument("--champ", action="append", default=[]); sp.add_argument("--queue", type=int)
     sp.add_argument("-p", "--player", default="me"); sp.add_argument("--win", action="store_true")
     sp.add_argument("--loss", action="store_true")
+    for name in ("games", "lanes", "paths"):
+        sp = sub.add_parser(name, parents=[common])
+        if name == "paths":
+            sp.add_argument("--from", dest="from_", type=int, default=1); sp.add_argument("--to", type=int, default=10)
+        sp.add_argument("-p", "--player", default="me"); sp.add_argument("--queue", type=int)
+        sp.add_argument("--n", type=int, default=0); sp.add_argument("--ranked", action="store_true", help="só Solo/Duo e Flex")
+        sp.add_argument("--since", help="AAAA-MM-DD (inclusive)"); sp.add_argument("--until", help="AAAA-MM-DD (inclusive)")
+    sub.add_parser("timers", parents=[common])
+    sp = sub.add_parser("fights", parents=[common]); sp.add_argument("gid"); sp.add_argument("-p", "--player", action="append")
+    sp.add_argument("--gap", type=int, default=20); sp.add_argument("--min", type=int, default=3)
+    sp = sub.add_parser("swings", parents=[common]); sp.add_argument("gid"); sp.add_argument("-p", "--player", action="append")
+    sp.add_argument("--window", type=int, default=3); sp.add_argument("--top", type=int, default=5)
+    sp = sub.add_parser("decisions", parents=[common]); sp.add_argument("gid"); sp.add_argument("-p", "--player", action="append")
+    sp.add_argument("--kind", help="lane,travessia,objetivo,ausente,recall,morte")
     for name in ("frames", "events", "series", "at"):
         sp = sub.add_parser(name, parents=[common]); sp.add_argument("gid")
         sp.add_argument("-p", "--player", action="append")
@@ -241,7 +479,8 @@ def main() -> None:
     out = Out(a)
     try:
         {"players": cmd_players, "find": cmd_find, "frames": cmd_frames, "events": cmd_events,
-         "at": cmd_at, "series": cmd_series}[a.cmd](a, out)
+         "at": cmd_at, "series": cmd_series, "games": cmd_games, "lanes": cmd_lanes, "paths": cmd_paths,
+         "timers": cmd_timers, "decisions": cmd_decisions, "fights": cmd_fights, "swings": cmd_swings}[a.cmd](a, out)
     except BrokenPipeError:  # ex.: | head
         sys.stderr.close()
 

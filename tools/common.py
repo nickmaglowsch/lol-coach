@@ -136,30 +136,59 @@ class LCU:
 
 
 # ----------------------------------------------------------------------------- Riot API
+KEY_FILE = ROOT / "riot_api_key.txt"   # alternativa à variável de ambiente; ignorado pelo git
+
+
 class RiotAPI:
-    """Cliente mínimo da API oficial (Match-V5). Chave lida de RIOT_API_KEY."""
+    """Cliente mínimo da API oficial (Match-V5).
+    Chave: variável RIOT_API_KEY ou arquivo riot_api_key.txt na raiz do projeto (nunca impressa).
+    Respeita o limite da chave de desenvolvimento (20/s e 100 a cada 2 min) com espaçamento fixo
+    e repete quando recebe 429 (Retry-After)."""
+
+    MIN_INTERVAL = 1.25  # s entre requisições -> ~96 a cada 2 min
+    _last = 0.0
 
     def __init__(self, routing: str = "americas") -> None:
         key = os.environ.get("RIOT_API_KEY", "").strip()
+        if not key and KEY_FILE.exists():
+            key = KEY_FILE.read_text(encoding="utf-8").strip()
         if not key:
             raise RiotAPIError(
-                "RIOT_API_KEY não definida. Gere uma chave em https://developer.riotgames.com "
-                "(login com a conta Riot -> 'Development API Key', válida por 24h) e rode, no PowerShell:\n"
-                "  $env:RIOT_API_KEY = 'RGAPI-...'"
+                "Chave da Riot não encontrada. Gere em https://developer.riotgames.com "
+                "(login com a conta Riot -> 'Development API Key', válida por 24h) e salve sozinha "
+                f"no arquivo {KEY_FILE.name} na raiz do projeto (ou defina RIOT_API_KEY)."
             )
         self._key = key
         self.routing = routing
 
     def get(self, host: str, path: str, params: dict | None = None):
+        import time
         url = f"https://{host}.api.riotgames.com{path}"
         if params:
             url += "?" + urllib.parse.urlencode(params)
-        req = urllib.request.Request(url, headers={"X-Riot-Token": self._key, "Accept": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                return json.loads(r.read())
-        except urllib.error.HTTPError as e:
-            raise RiotAPIError(f"HTTP {e.code} em {path}") from None
+        # User-Agent próprio: o Cloudflare da Riot recusa o padrão "Python-urllib" (erro 1010)
+        req = urllib.request.Request(url, headers={"X-Riot-Token": self._key, "Accept": "application/json",
+                                                   "User-Agent": "lol-coach/0.1"})
+        for attempt in range(4):
+            wait = RiotAPI._last + self.MIN_INTERVAL - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            RiotAPI._last = time.monotonic()
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    return json.loads(r.read())
+            except urllib.error.HTTPError as e:
+                if e.code == 429 and attempt < 3:
+                    time.sleep(float(e.headers.get("Retry-After") or 10))
+                    continue
+                hint = {401: " (chave ausente ou inválida)", 403: " (chave expirada ou sem permissão; gere outra)",
+                        404: " (não encontrado)"}.get(e.code, "")
+                raise RiotAPIError(f"HTTP {e.code} em {path}{hint}") from None
+            except (urllib.error.URLError, TimeoutError) as e:
+                if attempt < 3:
+                    time.sleep(3)
+                    continue
+                raise RiotAPIError(f"sem resposta da API da Riot em {path} ({e.__class__.__name__})") from None
 
     def account_by_riot_id(self, name: str, tag: str):
         return self.get(self.routing, f"/riot/account/v1/accounts/by-riot-id/"
@@ -228,6 +257,15 @@ def me_puuid() -> str | None:
     return load_json(p).get("puuid") if p.exists() else None
 
 
+def me_ids() -> set[str]:
+    """Identificadores da conta do usuário: PUUID do cliente, PUUID da API oficial e Riot ID."""
+    p = DATA / "me.json"
+    if not p.exists():
+        return set()
+    me = load_json(p)
+    return {v for v in (me.get("puuid"), me.get("puuidApi"), (me.get("riotId") or "").lower()) if v}
+
+
 def _norm(s: str) -> str:
     return "".join(ch for ch in str(s).lower() if ch.isalnum())
 
@@ -236,8 +274,8 @@ def resolve_player(participants: list[dict], sel: str | int | None) -> dict | No
     """Acha um participante por: 'me' (conta do cliente), pid, Riot ID 'Nome#TAG', nome, campeão.
     Comparação ignora maiúsculas, espaços e pontuação (Cho'Gath == chogath)."""
     if sel is None or str(sel).lower() == "me":
-        me = me_puuid()
-        return next((p for p in participants if me and p.get("puuid") == me), None)
+        ids = me_ids()
+        return next((p for p in participants if p.get("puuid") in ids or p.get("riotId", "").lower() in ids), None)
     s = str(sel)
     if s.isdigit() and int(s) <= 10:
         return next((p for p in participants if p["pid"] == int(s)), None)

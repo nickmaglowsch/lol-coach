@@ -1,0 +1,249 @@
+"""Teste rápido de tudo o que dá para testar sem rede: `lol selftest`.
+
+1. Compila todos os módulos e procura sintaxe que só funciona no Python 3.12+ (o projeto promete 3.10+).
+2. Zonas e referências do mapa em pontos conhecidos.
+3. Com partidas em cache: roda as consultas do `lol` e renderiza um relatório de uma partida e um de
+   várias partidas numa pasta temporária, conferindo seções, dados embutidos e (se houver Node) o JavaScript.
+Sai com código 1 se algo falhar. Não baixa nada e não toca em reports/.
+"""
+from __future__ import annotations
+
+import io
+import json
+import py_compile
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import tokenize
+from pathlib import Path
+
+TOOLS = Path(__file__).resolve().parent
+sys.stdout.reconfigure(encoding="utf-8")
+results: list[tuple[bool, str]] = []
+
+
+def check(ok: bool, what: str) -> bool:
+    results.append((bool(ok), what))
+    print(("  ok      " if ok else "  FALHOU  ") + what)
+    return bool(ok)
+
+
+# ----------------------------------------------------------------------------- 1. código
+def pep701_issues(path: Path) -> list[str]:
+    """f-strings que só compilam no 3.12+: aspas iguais às da f-string externa ou barra invertida
+    dentro de uma expressão {…}."""
+    issues = []
+    stack: list[dict] = []  # f-strings abertas: aspas e profundidade de chaves
+    try:
+        toks = list(tokenize.generate_tokens(io.StringIO(path.read_text(encoding="utf-8")).readline))
+    except (tokenize.TokenError, SyntaxError) as e:
+        return [f"{path.name}: não tokeniza ({e})"]
+    for tok in toks:
+        typ = tok.type
+        if typ == getattr(tokenize, "FSTRING_START", None):
+            q = tok.string.lstrip("rRfFbBuU")
+            if stack and stack[-1]["depth"] > 0 and (q[0] == stack[-1]["q"][0] and len(stack[-1]["q"]) == 1):
+                issues.append(f"{path.name}:{tok.start[0]} f-string com as mesmas aspas da f-string externa")
+            stack.append({"q": q, "depth": 0})
+            continue
+        if typ == getattr(tokenize, "FSTRING_END", None):
+            stack.pop()
+            continue
+        if not stack:
+            continue
+        top = stack[-1]
+        if typ == tokenize.OP and tok.string == "{":
+            top["depth"] += 1
+        elif typ == tokenize.OP and tok.string == "}":
+            top["depth"] = max(0, top["depth"] - 1)
+        elif top["depth"] > 0 and typ == tokenize.STRING:
+            body = tok.string.lstrip("rRbBuU")
+            if len(top["q"]) == 1 and body[0] == top["q"][0]:
+                issues.append(f"{path.name}:{tok.start[0]} string com as mesmas aspas da f-string externa")
+            if "\\" in tok.string:
+                issues.append(f"{path.name}:{tok.start[0]} barra invertida dentro de expressão de f-string")
+    return issues
+
+
+def test_code() -> None:
+    print("1. Código")
+    for py in sorted(TOOLS.glob("*.py")):
+        try:
+            py_compile.compile(str(py), doraise=True, cfile=str(Path(tempfile.gettempdir()) / (py.stem + ".pyc")))
+            ok = True
+        except py_compile.PyCompileError as e:
+            ok = False
+            print("     ", e.msg.strip().splitlines()[-1])
+        check(ok, f"compila {py.name}")
+    issues = [i for py in sorted(TOOLS.glob("*.py")) for i in pep701_issues(py)]
+    for i in issues:
+        print("     ", i)
+    check(not issues, "sem sintaxe exclusiva do Python 3.12+ (README promete 3.10+)")
+
+
+# ----------------------------------------------------------------------------- 2. mapa
+def test_map() -> None:
+    print("2. Mapa")
+    sys.path.insert(0, str(TOOLS))
+    from landmarks import nearest
+    from zones import MIRROR_X, MIRROR_Y, zone_abs
+    camps = [(3821, 8101), (2288, 8448), (3780, 6443), (6943, 5422), (7765, 4020), (8394, 2641)]
+    check(all(zone_abs(x, y) == "jungle_blue" and zone_abs(MIRROR_X - x, MIRROR_Y - y) == "jungle_red" for x, y in camps),
+          "campos da jungle na jungle certa (azul e espelho vermelho)")
+    check(all(zone_abs(x, y) == "river" for x, y in [(5007, 10471), (9866, 4414), (4400, 9600), (10500, 5100)]),
+          "fossos e scuttles no rio")
+    check(zone_abs(400, 400) == "base_blue" and zone_abs(14400, 14450) == "base_red", "fontes nas bases")
+    check(nearest(13882, 4112)[0]["name"] == "torre externa bot vermelha", "referência mais próxima de um ponto conhecido")
+
+
+# ----------------------------------------------------------------------------- 3. dados
+def run_lol(*args: str) -> subprocess.CompletedProcess:
+    script = {"games": "query.py", "lanes": "query.py", "paths": "query.py", "players": "query.py", "frames": "query.py",
+              "events": "query.py", "at": "query.py", "series": "query.py", "find": "query.py"}.get(args[0], "query.py")
+    return subprocess.run([sys.executable, str(TOOLS / script), *args], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=120)
+
+
+def check_html(path: Path, ids: list[str], label: str) -> None:
+    page = path.read_text(encoding="utf-8")
+    missing = [i for i in ids if f'id="{i}"' not in page]
+    check(not missing, f"{label}: seções presentes" + (f" (faltam {missing})" if missing else ""))
+    body = page.split('<div class="wrap">', 1)[1].split("<script", 1)[0]
+    visible = re.sub(r"<[^>]+>", " ", body)
+    bad = [w for w in ("None", "undefined", "NaN", "{'", "nan") if re.search(rf"(?<!\w){re.escape(w)}(?!\w)", visible)]
+    check(not bad, f"{label}: sem 'None/undefined/NaN' no texto" + (f" (achou {bad})" if bad else ""))
+    m = re.search(r'id="report-data">(.*?)</script>', page, re.S)
+    try:
+        json.loads(m.group(1).replace("<\\/", "</"))
+        ok = True
+    except Exception:
+        ok = False
+    check(ok, f"{label}: dados embutidos são JSON válido")
+    node = shutil.which("node")
+    if node:
+        code = page.rsplit("<script>", 1)[1].split("</script>", 1)[0]
+        js = Path(tempfile.gettempdir()) / "lolcoach_selftest.js"
+        js.write_text(code, encoding="utf-8")
+        r = subprocess.run([node, "--check", str(js)], capture_output=True, text=True)
+        check(r.returncode == 0, f"{label}: JavaScript sem erro de sintaxe (node --check)")
+    else:
+        print("  (pulado) node não encontrado: JavaScript não verificado")
+
+
+def test_data() -> None:
+    print("3. Consultas e relatórios (com o cache)")
+    sys.path.insert(0, str(TOOLS))
+    from summarize import cached_ids, get_summary
+    ids = [g for g in sorted(cached_ids(), reverse=True)]
+    games = [get_summary(g) for g in ids]
+    sr = [s for s in games if s["mapId"] == 11 and (s["duration"] or 0) > 600]
+    if not sr:
+        print("  (pulado) nenhuma partida de Summoner's Rift em cache: rode `lol fetch latest` antes")
+        return
+    s = max(sr, key=lambda x: x["gameCreation"] or 0)
+    gid = str(s["gameId"])
+    for args in (["players", gid], ["frames", gid, "--to", "3"], ["events", gid, "--to", "10:00"], ["at", gid, "10:00"],
+                 ["series", gid, "team"], ["games", "--n", "3"], ["lanes", "--n", "3"], ["paths", "--n", "3"], ["find"],
+                 ["fights", gid], ["swings", gid], ["timers"], ["decisions", gid]):
+        r = run_lol(*args)
+        check(r.returncode == 0 and r.stdout.strip() != "", f"lol {' '.join(args[:1] + ['…'] if len(args) > 1 else args)}"
+              + (f" ({r.stderr.strip().splitlines()[-1]})" if r.returncode else ""))
+
+    from render import render
+    tmp = Path(tempfile.mkdtemp(prefix="lolcoach-selftest-"))
+    kill = next((k for k in s["events"]["kills"] if k["ts"] > 120000), None)
+    top = next((p for p in s["participants"] if p.get("role") == "TOP"), None)
+    spec = {
+        "gameId": int(gid), "focus": "me" if any(p.get("puuid") for p in s["participants"]) else 1, "tema": "selftest",
+        "title": "Selftest", "tldr": [{"title": "Card", "text": "Texto com **negrito** às 10:00."}, "Texto simples."],
+        "verdicts": [{"q": "Pergunta de teste?", "verdict": "INCONCLUSIVO", "points": ["Ponto com minuto 10:00."]}],
+        "gold": {"bands": [["10:00", "12:00", "faixa"]], "notes": [["10:00", "team", "nota"]]},
+        "strip": {"from": 1, "to": 10}, "pathMap": {"from": 1, "to": 10},
+        "recs": [{"title": "Rec", "text": "Meta mensurável até 15:00."}],
+        "sections": [{"title": "Seção", "points": ["Item às 05:00."]}],
+    }
+    from common import resolve_player
+    if resolve_player(s["participants"], "me") is None:
+        spec["focus"] = 1
+    if top:
+        spec["laneChart"] = {"role": "TOP", "from": 2, "to": 10}
+    if kill:
+        t0 = kill["ts"] // 1000
+        spec["fights"] = [{"title": "Luta", "from": f"{t0 // 60}:{t0 % 60:02d}", "to": f"{(t0 + 30) // 60}:{(t0 + 30) % 60:02d}",
+                           "positionsAt": f"{t0 // 60}:00"}]
+    p = tmp / "selftest-uma.json"
+    p.write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
+    try:
+        outs = render(p, None)
+        ok = len(outs) == 2
+    except SystemExit as e:
+        ok, outs = False, []
+        print("     ", e)
+    check(ok, f"render de uma partida ({gid})")
+    if ok:
+        ids_expected = ["goldChart", "replayMap", "rpTrack", "rpSlider", "objChart", "strip", "mapPath", "decisoes"]
+        ids_expected += ["laneChart"] if top else []
+        ids_expected += ["mapFight0"] if kill else []
+        check_html(p.with_suffix(".html"), ids_expected, "uma partida")
+        md = p.with_suffix(".md").read_text(encoding="utf-8")
+        check(all(h in md for h in ("## Resumo em 5 linhas", "## Linha do tempo", "## Recomendações", "## Limitações")),
+              "uma partida: Markdown com as seções obrigatórias")
+
+    # esqueleto do `lol new`: render recusa TODO; com --draft gera
+    r = subprocess.run([sys.executable, str(TOOLS / "scaffold.py"), "spec", gid], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
+    ok = r.returncode == 0 and '"TODO' in r.stdout
+    check(ok, "lol spec gera esqueleto com TODO")
+    if ok:
+        sk = tmp / "selftest-esqueleto.json"
+        sk.write_text(r.stdout, encoding="utf-8")
+        try:
+            render(sk, None)
+            refused = False
+        except SystemExit:
+            refused = True
+        check(refused, "render recusa spec com TODO")
+        try:
+            render(sk, None, draft=True)
+            ok2 = True
+        except SystemExit as e:
+            ok2 = False
+            print("     ", e)
+        check(ok2, "render --draft aceita o esqueleto")
+        if ok2:
+            check('id="decisoes"' in sk.with_suffix(".html").read_text(encoding="utf-8"), "esqueleto já traz a revisão de decisões")
+
+    multi = {"mode": "multi", "focus": spec["focus"] if spec["focus"] == "me" else "me", "tema": "selftest", "title": "Selftest",
+             "n": 10, "compare": [{"label": "Vitórias", "result": "win"}, {"label": "Derrotas", "result": "loss"}],
+             "tldr": ["Resumo."], "verdicts": [{"q": "Teste?", "verdict": "MISTO", "points": ["3 de 10 partidas."]}]}
+    p2 = tmp / "selftest-varias.json"
+    p2.write_text(json.dumps(multi, ensure_ascii=False), encoding="utf-8")
+    try:
+        render(p2, None)
+        ok = True
+    except SystemExit as e:
+        ok = False
+        print("     ", e)
+    check(ok, "render de várias partidas")
+    if ok:
+        check_html(p2.with_suffix(".html"), ["multiGold", "deathBars"], "várias partidas")
+        check('class="tbl cmp"' in p2.with_suffix(".html").read_text(encoding="utf-8"), "várias partidas: tabela de comparação")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+def main() -> None:
+    test_code()
+    test_map()
+    try:
+        test_data()
+    except Exception as e:  # um erro inesperado também é falha do teste
+        check(False, f"erro inesperado: {e.__class__.__name__}: {e}")
+    bad = [w for ok, w in results if not ok]
+    print(f"\n{len(results) - len(bad)}/{len(results)} verificações ok" + (f"; falharam: {len(bad)}" if bad else ""))
+    sys.exit(1 if bad else 0)
+
+
+if __name__ == "__main__":
+    main()
