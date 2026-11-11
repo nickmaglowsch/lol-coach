@@ -220,6 +220,14 @@ def test_data(fixture: dict | None = None) -> None:
     except Exception:
         ok = False
     check(ok, "lol pregame --json: 5 roles atribuídas em cada time")
+    hp = Path(tempfile.mkdtemp(prefix="lolcoach-pregame-")) / "pregame.html"
+    r = run_lol("pregame", "--ally", ally, "--enemy", enemy, "--side", "blue", "--html", str(hp))
+    page = hp.read_text(encoding="utf-8") if hp.exists() else ""
+    visible = re.sub(r"<[^>]+>", " ", page.split('<div class="wrap">', 1)[-1])
+    bad = [w for w in ("None", "undefined", "NaN", "{{") if w in visible or (w == "{{" and w in page)]
+    check(r.returncode == 0 and "<title>Pré-jogo" in page and "<svg" in page and not bad,
+          "lol pregame --html: página do celular" + (f" (achou {bad})" if bad else ""))
+    shutil.rmtree(hp.parent, ignore_errors=True)
 
     import render as render_mod
     from render import render

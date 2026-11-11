@@ -27,7 +27,9 @@ import sys
 import time
 from collections import Counter, defaultdict
 
-from common import DATA, LCU, LCUError, _norm, load_json, mmss, resolve_player
+from pathlib import Path
+
+from common import DATA, LCU, LCUError, REPORTS, _norm, load_json, mmss, resolve_player
 
 WP = DATA / "winprob"
 ROLES = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"]
@@ -404,6 +406,129 @@ def print_plan(p: dict) -> None:
           "Não considera composição, itens, runas nem o elo de cada jogador. Posições só a cada minuto.")
 
 
+# ============================================================================ página (artifact)
+TEMPLATE = Path(__file__).resolve().parent / "templates" / "pregame.html"
+# centro aproximado da jungle de cada time em cada metade, no viewBox 0-100 (azul embaixo à esquerda)
+JG_SPOT = {(100, "top"): (26, 46), (100, "bot"): (53, 73), (200, "top"): (48, 27), (200, "bot"): (74, 53)}
+
+
+def map_svg(rec: str | None, team: int | None, ej_side: str | None, ej_label: str) -> str:
+    def half(side):
+        pts = "0,0 100,0 0,100" if side == "top" else "100,0 100,100 0,100"
+        fill = "var(--map-pick)" if rec == side else "var(--map)"
+        return f'<polygon points="{pts}" fill="{fill}"/>'
+    my = {100: "var(--ally)", 200: "var(--enemy)"}
+    blue, red = (my[100], my[200]) if team != 200 else (my[200], my[100])
+    out = [f'<svg viewBox="0 0 100 100" role="img" aria-label="Mapa: lado recomendado {rec or "nenhum"}">',
+           '<rect x="0" y="0" width="100" height="100" rx="6" fill="var(--map)"/>', half("top"), half("bot"),
+           '<line x1="2" y1="2" x2="98" y2="98" stroke="var(--river)" stroke-width="7" stroke-linecap="round"/>',
+           '<path d="M8 92 L8 8 L92 8 M8 92 L92 92 L92 8 M8 92 L92 8" fill="none" stroke="var(--muted)" '
+           'stroke-opacity=".45" stroke-width="2"/>',
+           f'<circle cx="8" cy="92" r="6" fill="{blue}"/><circle cx="92" cy="8" r="6" fill="{red}"/>',
+           '<text x="31" y="27" font-size="7" fill="var(--muted)" text-anchor="middle">barão</text>',
+           '<text x="70" y="78" font-size="7" fill="var(--muted)" text-anchor="middle">dragão</text>']
+    if ej_side:
+        enemy_team = 200 if team != 200 else 100
+        x, y = JG_SPOT[(enemy_team, ej_side)] if team else ((30, 30) if ej_side == "top" else (70, 70))
+        out.append(f'<circle cx="{x}" cy="{y}" r="4.5" fill="var(--enemy)" stroke="var(--surface)" stroke-width="1.5"/>'
+                   f'<text x="{x}" y="{y - 7}" font-size="7" font-weight="600" fill="var(--enemy)" text-anchor="middle" '
+                   f'paint-order="stroke" stroke="var(--surface)" stroke-width="2.5">{H(ej_label)}</text>')
+    out.append("</svg>")
+    return "".join(out)
+
+
+def H(x) -> str:
+    import html
+    return html.escape(str(x))
+
+
+def page(p: dict, alias: str) -> str:
+    import datetime as dt
+    rec, ej = p["recommendation"], p.get("enemyJungle")
+    team_txt = {100: "time azul", 200: "time vermelho"}.get(p["team"], "lado do mapa não informado")
+    ej_label = f'{ej["champion"]} ~{ej["firstTakedown"].get("medianTime") or "?"}' if ej else ""
+    B = []
+    head = f'Pré-jogo · {H(p["me"] or "?")} ({ROLE_PT.get(p["meRole"], p["meRole"])}) · {team_txt}'
+    if rec:
+        title = f"Comece pelo {rec}"
+        camps = f'<p class="camps">{H(p["startCamps"])}</p>' if p.get("startCamps") else \
+            '<p class="sub">informe o lado do mapa para ver os campos</p>'
+        conf = f'<span class="conf {"media" if p["confidence"] == "média" else ""}">confiança {H(p["confidence"])}</span>'
+    else:
+        title, camps, conf = "Sem lado definido", '<p class="sub">os dados não apontam um lado</p>', ""
+    B.append(f'<section class="pick">{map_svg(rec, p["team"], ej and ej.get("likelySide"), ej_label)}'
+             f'<div class="txt"><div class="eyebrow">{head}</div><h1>{H(title)}</h1>{camps}{conf}</div></section>')
+    B.append('<ul class="why">' + "".join(f"<li>{H(r[:1].upper() + r[1:])}</li>" for r in p["reasons"]) + "</ul>")
+
+    if ej:
+        ft = ej["firstTakedown"]
+        side = ej.get("likelySide")
+        side_txt = (f'{side} {pct(ej["sideScore"][side])}' if side else
+                    f'top {pct(ej["sideScore"]["top"])} · bot {pct(ej["sideScore"]["bot"])}')
+        cells = [(ft.get("medianTime") or "—", "1º abate (mediana)"),
+                 (pct(ft["before4min"]), "abate antes de 4:00"),
+                 (side_txt, "lado provável" if side else "sem lado claro"),
+                 (pct(ej["diesBefore10"]), "morre antes de 10:00")]
+        kv = "".join(f"<div><b>{H(v)}</b><span>{H(k)}</span></div>" for v, k in cells)
+        B.append(f'<section><div class="eyebrow">Jungle inimigo</div><h2>{H(ej["champion"])} '
+                 f'<span class="sub">· {ej["games"]} partidas no elo</span></h2><div class="kv">{kv}</div>'
+                 f'<p class="sub">Começa em {H(top(ej["startCamp"], 2))}. Primeiro objetivo do time dele até 10:00: '
+                 f'{H(top(ej["firstObjective"], 3))}.</p></section>')
+    elif p["enemy"].get("JUNGLE"):
+        B.append(f'<section><div class="eyebrow">Jungle inimigo</div><h2>{H(p["enemy"]["JUNGLE"])}</h2>'
+                 '<p class="sub">Menos de 5 partidas desse campeão no jungle entre as coletadas: sem padrão.</p></section>')
+
+    rows = []
+    for side, lab in (("top", "TOP"), ("mid", "MID"), ("bot", "BOT")):
+        L = p["lanes"][side]
+        if not L["ally"] or not L["enemy"]:
+            continue
+        n_min = min(x["n"] for x in L["ally"] + L["enemy"])
+        cls = "pos" if L["edge"] >= 100 else "neg" if L["edge"] <= -100 else "zero"
+        who = (f'<span class="ally">{H(" + ".join(x["champion"] for x in L["ally"]))}</span> × '
+               f'<span class="enemy">{H(" + ".join(x["champion"] for x in L["enemy"]))}</span>')
+        rows.append(f'<div class="lane"><span class="eyebrow">{lab}</span><span class="who">{who}</span>'
+                    f'<span class="val {cls}">{fmt(L["edge"])}<small>{"amostra pequena" if n_min < 15 else f"n ≥ {n_min}"}</small></span></div>')
+    if rows:
+        B.append('<section><div class="eyebrow">Lanes</div><h2>Saldo estimado do time aos 10:00</h2>'
+                 f'<div class="lanes">{"".join(rows)}</div></section>')
+
+    def roster(d, conf=None):
+        return "<ul>" + "".join(f'<li><span>{ROLE_PT[r]}</span>{H(d[r])}{"?" if conf and conf.get(r, 1) < 0.6 else ""}</li>'
+                                for r in ROLES if r in d) + "</ul>"
+    B.append(f'<section class="teams"><div><div class="eyebrow ally">Seu time</div>{roster(p["ally"])}</div>'
+             f'<div><div class="eyebrow enemy">Inimigo</div>{roster(p["enemy"], p["enemyRoleConfidence"])}</div></section>')
+
+    h = p["history"]
+    li = []
+    for k, v in sorted(h["bySide"].items()):
+        li.append(f'De jungle, começando no lado {k}: {v["wins"]}/{v["games"]} vitórias ({pct(v["wins"] / v["games"])})')
+    for key, label in (("withChamp", "Com"), ("vsJungler", "Contra o jungle")):
+        x = h.get(key)
+        if x and x["champion"]:
+            li.append(f'{label} {x["champion"]}: {x["wins"]}/{x["games"]} vitórias' if x["games"] else f'{label} {x["champion"]}: nenhuma partida')
+    if li:
+        B.append(f'<section><div class="eyebrow">Seu histórico · {h["games"]} partidas</div>'
+                 '<ul class="hist">' + "".join(f"<li>{H(x)}</li>" for x in li) + "</ul></section>")
+
+    base = f' Chance no minuto 0 (modelo, só pelo lado do mapa): {pct(p["baseChance"])}.' if p.get("baseChance") is not None else ""
+    if p.get("timers", {}).get("dragão"):
+        base += f' Dragão até ~{mmss(p["timers"]["dragão"])}, vastilarvas até ~{mmss(p["timers"].get("vastilarvas") or 0)}.'
+    B.append(f'<footer>Tendências de {p["samples"]} partidas do elo e do seu histórico, não previsão do que esse jogador vai '
+             f'fazer. Não considera composição, itens nem runas.{H(base)} Gerado em '
+             f'{dt.datetime.now():%d/%m %H:%M} por <span class="mono">lol pregame</span>.</footer>')
+    tpl = TEMPLATE.read_text(encoding="utf-8")
+    return tpl.replace("{{TITLE}}", H(f"Pré-jogo · {alias}")).replace("{{BODY}}", "\n".join(B))
+
+
+def write_page(p: dict, path: Path) -> Path:
+    me = DATA / "me.json"
+    alias = (load_json(me).get("alias") if me.exists() else None) or "você"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(page(p, alias), encoding="utf-8")
+    return path
+
+
 # ============================================================================ cliente
 POS_IN = {"top": "TOP", "jungle": "JUNGLE", "middle": "MIDDLE", "bottom": "BOTTOM", "utility": "UTILITY"}
 
@@ -442,6 +567,8 @@ def main() -> None:
     ap.add_argument("--wait", action="store_true", help="espera a seleção de campeões ter os 10 campeões")
     ap.add_argument("--timeout", type=int, default=900)
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--html", nargs="?", const=str(REPORTS / "pregame.html"), metavar="ARQUIVO",
+                    help="grava também a página para o celular (padrão reports/pregame.html; publique sempre o mesmo arquivo)")
     a = ap.parse_args()
     champs = champions()
     if not champs:
@@ -496,6 +623,8 @@ def main() -> None:
     if me_cid and me_cid in ally:
         me_role = ally[me_cid]
     p = plan(ally_by_role, enemy_by_role, team, me_role, champs)
+    if a.html:
+        print(f"[ok] página: {write_page(p, Path(a.html))}", file=sys.stderr)
     if a.json:
         print(json.dumps(p, ensure_ascii=False))
     else:

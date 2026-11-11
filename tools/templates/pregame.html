@@ -1,0 +1,81 @@
+<meta charset="utf-8">
+<title>{{TITLE}}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Gerado por tools/pregame.py (lol pregame --html). Não editar à mão.
+   Layout: uma coluna para ler no celular durante a tela de carregamento; o lado recomendado vem primeiro,
+   num mapa simples (metade top = lado do barão, metade bot = lado do dragão), depois o jungle inimigo e as lanes.
+   Mesmos tokens e fontes dos relatórios (tools/templates/report.html). */
+:root {
+  --bg: #F2F4F7; --surface: #FFFFFF; --ink: #121923; --muted: #586274; --line: #D8DDE5;
+  --ally: #2560C6; --enemy: #C23A33; --gold: #9C6A0E; --ok: #17845A; --bad: #B0265C;
+  --map: #E3E8EF; --map-pick: #F3E3C2; --river: #C9D6E6;
+  --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0D1218; --surface: #151C26; --ink: #E5EAF1; --muted: #9AA4B4; --line: #283241;
+  --ally: #5E95F2; --enemy: #EE6A61; --gold: #E1AE4C; --ok: #3DBE85; --bad: #EE6E9C;
+  --map: #1C2532; --map-pick: #3A3220; --river: #24364D; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0D1218; --surface: #151C26; --ink: #E5EAF1; --muted: #9AA4B4; --line: #283241;
+  --ally: #5E95F2; --enemy: #EE6A61; --gold: #E1AE4C; --ok: #3DBE85; --bad: #EE6E9C;
+  --map: #1C2532; --map-pick: #3A3220; --river: #24364D; color-scheme: dark }
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 var(--body); }
+.wrap { max-width: 560px; margin: 0 auto; padding-block: 18px 32px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 22px; }
+h1, h2 { font-family: var(--display); line-height: 1.02; margin: 0; text-wrap: balance; }
+h1 { font-size: clamp(38px, 11vw, 54px); font-weight: 700; letter-spacing: .01em; }
+h2 { font-size: 22px; font-weight: 600; letter-spacing: .02em; }
+p { margin: 0; }
+.eyebrow { font: 600 11.5px/1.2 var(--body); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.sub { color: var(--muted); }
+.ally { color: var(--ally); } .enemy { color: var(--enemy); } .gold { color: var(--gold); }
+section { display: grid; gap: 10px; min-width: 0; }
+
+/* lado recomendado */
+.pick { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 16px; align-items: center; }
+.pick svg { width: 132px; height: 132px; display: block; }
+.pick .txt { display: grid; gap: 6px; min-width: 0; }
+.camps { font-weight: 600; }
+.conf { display: inline-block; font: 700 11px/1 var(--body); letter-spacing: .08em; text-transform: uppercase;
+  padding: 5px 8px; border-radius: 999px; border: 1.5px solid currentColor; color: var(--muted); justify-self: start; }
+.conf.media { color: var(--gold); }
+.why { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; }
+
+/* jungle inimigo: pares rótulo/valor */
+.kv { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--line);
+  border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.kv div { background: var(--surface); padding: 10px 12px; display: grid; gap: 2px; min-width: 0; }
+.kv b { font: 600 24px/1.05 var(--display); font-variant-numeric: tabular-nums; }
+.kv span { font-size: 12.5px; color: var(--muted); }
+
+/* lanes */
+.lanes { display: grid; gap: 0; border-top: 1px solid var(--line); }
+.lane { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 10px; align-items: baseline;
+  padding: 9px 0; border-bottom: 1px solid var(--line); }
+.lane .who { min-width: 0; overflow-wrap: anywhere; }
+.lane .val { font: 600 18px/1 var(--display); font-variant-numeric: tabular-nums; text-align: right; }
+.lane .val small { display: block; font: 400 11px/1.3 var(--body); color: var(--muted); }
+.val.pos { color: var(--ok); } .val.neg { color: var(--bad); } .val.zero { color: var(--muted); }
+
+.teams { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; font-size: 13.5px; }
+.teams ul { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 2px; }
+.teams li span { color: var(--muted); display: inline-block; min-width: 54px; }
+.hist { margin: 0; padding-left: 18px; display: grid; gap: 3px; font-size: 14px; }
+footer { font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
+@media (max-width: 360px) { .pick { grid-template-columns: 1fr; } }
+</style>
+
+<div class="wrap">
+{{BODY}}
+</div>
