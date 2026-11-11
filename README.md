@@ -61,6 +61,8 @@ Modelos e calibração (precisam de partidas em cache; o crawl usa a Riot API):
 ./lol winprob curve <gameId>            # chance de vitória minuto a minuto
 ./lol junglers --champ Shaco            # o que esse campeão costuma fazer nos primeiros minutos
 ./lol dashboard --ranked                # reports/painel.html: evolução com metas
+./lol pregame --wait                    # na seleção de campeões: lado para começar e o que esperar do jungle inimigo
+./lol pregame --ally "Ekko,Cho'Gath,Vladimir,Nilah,Ashe" --enemy "Shaco,Akali,Yorick,Tristana,Thresh" --side blue
 ```
 
 Depois de trocar os `TODO` do spec pelo seu julgamento, rode `./lol render reports/<arquivo>.json`. O render recusa spec com `TODO`; use `--draft` só para pré-visualizar. Os passos abaixo mostram como montar o spec à mão.

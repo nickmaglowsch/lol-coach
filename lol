@@ -24,6 +24,7 @@ case "$cmd" in
   validate)                     exec "$PY" "$ROOT/tools/zones.py" validate ;;
   selftest)                     exec "$PY" "$ROOT/tools/selftest.py" "$@" ;;
   watch)                        exec "$PY" "$ROOT/tools/watch.py" "$@" ;;
+  pregame|pre)                  exec "$PY" "$ROOT/tools/pregame.py" "$@" ;;
   fixture)                      exec "$PY" "$ROOT/tools/fixture.py" "$@" ;;
   *) sed -n '/^## Ferramentas/,/^## /p' "$ROOT/CLAUDE.md" | head -60 ;;
 esac
