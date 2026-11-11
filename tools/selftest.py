@@ -103,13 +103,25 @@ def test_map() -> None:
           "fossos e scuttles no rio")
     check(zone_abs(400, 400) == "base_blue" and zone_abs(14400, 14450) == "base_red", "fontes nas bases")
     check(nearest(13882, 4112)[0]["name"] == "torre externa bot vermelha", "referência mais próxima de um ponto conhecido")
+    from landmarks import LANDMARKS
+    from pregame import CAMPS
+    bad = []
+    for (sd, team), txt in CAMPS.items():
+        names = [c.strip() for c in txt.replace(" ou ", ", ").split(",")]
+        for n, x, y, t, kind, _ in LANDMARKS:
+            if kind == "campo" and t == team and n.rsplit(" ", 1)[0] in names:
+                got = "top" if y - x > 1200 else "bot" if y - x < -1200 else "centro"
+                if got != sd:
+                    bad.append(f"{n} ({sd})")
+    check(not bad, "pré-jogo: campos sugeridos ficam no lado recomendado" + (f" (errados: {bad})" if bad else ""))
 
 
 # ----------------------------------------------------------------------------- 3. dados
 def run_lol(*args: str) -> subprocess.CompletedProcess:
     script = {"games": "query.py", "lanes": "query.py", "paths": "query.py", "players": "query.py", "frames": "query.py",
               "events": "query.py", "at": "query.py", "series": "query.py", "find": "query.py", "vision": "vision.py",
-              "calibrate": "calibrate.py", "winprob": "winprob.py", "dashboard": "dashboard.py"}.get(args[0], "query.py")
+              "calibrate": "calibrate.py", "winprob": "winprob.py", "dashboard": "dashboard.py",
+              "pregame": "pregame.py"}.get(args[0], "query.py")
     if script != "query.py":  # os outros scripts não recebem o nome do comando (como no lançador `lol`)
         args = args[1:]
     return subprocess.run([sys.executable, str(TOOLS / script), *args], capture_output=True, text=True,
@@ -193,6 +205,29 @@ def test_data(fixture: dict | None = None) -> None:
     if (DATA / "winprob" / "jungle_patterns.json").exists():
         r = run_lol("winprob", "junglers", "--min-games", "5")
         check(r.returncode == 0 and r.stdout.strip() != "", "lol junglers")
+    # pré-jogo com os 10 campeões desta partida (sem cliente; roles dos inimigos inferidas)
+    mine = next((p for p in s["participants"] if p.get("role") == "JUNGLE"), s["participants"][0])
+    ally = ",".join(p["champion"] for p in s["participants"] if p["team"] == mine["team"])
+    enemy = ",".join(p["champion"] for p in s["participants"] if p["team"] != mine["team"])
+    r = run_lol("pregame", "--ally", ally, "--enemy", enemy, "--side", "blue" if mine["team"] == 100 else "red",
+                "--me", mine["champion"])
+    check(r.returncode == 0 and "O que esperar" in r.stdout and "Inimigo:" in r.stdout,
+          "lol pregame (campeões de um print)" + (f" ({(r.stderr.strip().splitlines() or ['?'])[-1]})" if r.returncode else ""))
+    r = run_lol("pregame", "--json", "--ally", ally, "--enemy", enemy)
+    try:
+        pj = json.loads(r.stdout)
+        ok = len(pj["ally"]) == 5 and len(pj["enemy"]) == 5 and set(pj["enemy"]) == {"TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"}
+    except Exception:
+        ok = False
+    check(ok, "lol pregame --json: 5 roles atribuídas em cada time")
+    hp = Path(tempfile.mkdtemp(prefix="lolcoach-pregame-")) / "pregame.html"
+    r = run_lol("pregame", "--ally", ally, "--enemy", enemy, "--side", "blue", "--html", str(hp))
+    page = hp.read_text(encoding="utf-8") if hp.exists() else ""
+    visible = re.sub(r"<[^>]+>", " ", page.split('<div class="wrap">', 1)[-1])
+    bad = [w for w in ("None", "undefined", "NaN", "{{") if w in visible or (w == "{{" and w in page)]
+    check(r.returncode == 0 and "<title>Pré-jogo" in page and "<svg" in page and not bad,
+          "lol pregame --html: página do celular" + (f" (achou {bad})" if bad else ""))
+    shutil.rmtree(hp.parent, ignore_errors=True)
 
     import render as render_mod
     from render import render
