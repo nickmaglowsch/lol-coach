@@ -209,6 +209,30 @@ class RiotAPI:
 
 
 # ----------------------------------------------------------------------------- IO
+class LiveClientError(Exception):
+    pass
+
+
+def live_client_get(path: str, timeout: float = 3):
+    """Live Client Data API do jogo aberto (https://127.0.0.1:2999/liveclientdata/...): oficial da Riot, só leitura,
+    sem autenticação; existe só enquanto a partida (inclusive personalizada/treino) está carregada.
+    TLS sem verificação SOMENTE para 127.0.0.1 (certificado próprio do jogo)."""
+    url = "https://127.0.0.1:2999/liveclientdata/" + path.lstrip("/")
+    assert urllib.parse.urlparse(url).hostname == "127.0.0.1"
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    req = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=timeout) as r:
+            body = r.read()
+    except urllib.error.HTTPError as e:
+        raise LiveClientError(f"HTTP {e.code} em {path} (a partida ainda está carregando?)") from None
+    except (urllib.error.URLError, ConnectionError, TimeoutError, OSError) as e:
+        raise LiveClientError(f"jogo não está aberto ({e.__class__.__name__})") from None
+    return json.loads(body) if body else None
+
+
 def load_json(p: Path):
     with open(p, encoding="utf-8") as f:
         return json.load(f)
