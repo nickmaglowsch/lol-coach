@@ -185,6 +185,14 @@ def test_data(fixture: dict | None = None) -> None:
     has_model = prob_fn(s, me["team"]) is not None
     check(bool(decs) and all((d["result"]["chance"] is not None) == has_model for d in decs),
           "revisão de decisões: chance de vitória " + ("presente (há modelo)" if has_model else "ausente sem modelo, sem erro"))
+    if has_model:
+        from winprob import state_at, win_prob
+        st = state_at(s, 10)
+        p1, p2 = win_prob(st, 100), win_prob(st, 200)
+        check(0 < p1 < 1 and abs(p1 + p2 - 1) < 1e-9, "chance de vitória: entre 0 e 1 e os dois times somam 100%")
+    if (DATA / "winprob" / "jungle_patterns.json").exists():
+        r = run_lol("winprob", "junglers", "--min-games", "5")
+        check(r.returncode == 0 and r.stdout.strip() != "", "lol junglers")
 
     import render as render_mod
     from render import render
