@@ -658,7 +658,20 @@ def parse_live(data: dict, alias_to_id: dict[str, int], champs: dict[int, str]) 
             "complete": len(ally) == 5 and len(enemy) == 5, "mapId": (data.get("gameData") or {}).get("mapNumber")}
 
 
+SECRET_KEYS = {"password", "spectatorKey", "encryptionKey", "observerEncryptionKey"}
+
+
+def _scrub(obj):
+    """Tira senha de sala personalizada e chaves de espectador antes de gravar a resposta bruta."""
+    if isinstance(obj, dict):
+        return {k: ("<removido>" if k in SECRET_KEYS else _scrub(v)) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_scrub(v) for v in obj]
+    return obj
+
+
 def _raw(name: str, obj) -> None:
+    obj = _scrub(obj)
     try:
         save_json(RAW / f"ultima-{name}.json", obj, indent=1)
     except OSError:
