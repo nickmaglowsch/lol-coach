@@ -39,8 +39,9 @@ SHRINK = 15          # partidas "fantasmas" com média zero (força) ou 50% (vit
 CALL = 150           # diferença de força (ouro do time aos 10:00) a partir da qual um lado é "mais forte"
 SIDE_GAP = 0.15      # diferença de probabilidade entre lados para dizer que o jungle inimigo "costuma ir" a um lado
 # lado do mapa (top = metade do barão/vastilarvas; bot = metade do dragão) -> campos de cada time nessa metade
-CAMPS = {("top", 100): "blue buff, aves ou lobos", ("bot", 100): "red buff, aves-galinhas (raptors) ou krugs",
-         ("top", 200): "red buff, aves-galinhas (raptors) ou krugs", ("bot", 200): "blue buff, aves ou lobos"}
+# (nomes e posições de tools/landmarks.py: aves azul (6943, 5422) fica na metade bot; aves vermelho na metade top)
+CAMPS = {("top", 100): "blue buff, gromp ou lobos", ("bot", 100): "red buff, aves ou krugs",
+         ("top", 200): "red buff, aves ou krugs", ("bot", 200): "blue buff, gromp ou lobos"}
 
 
 # ============================================================================ campeões

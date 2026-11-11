@@ -103,6 +103,17 @@ def test_map() -> None:
           "fossos e scuttles no rio")
     check(zone_abs(400, 400) == "base_blue" and zone_abs(14400, 14450) == "base_red", "fontes nas bases")
     check(nearest(13882, 4112)[0]["name"] == "torre externa bot vermelha", "referência mais próxima de um ponto conhecido")
+    from landmarks import LANDMARKS
+    from pregame import CAMPS
+    bad = []
+    for (sd, team), txt in CAMPS.items():
+        names = [c.strip() for c in txt.replace(" ou ", ", ").split(",")]
+        for n, x, y, t, kind, _ in LANDMARKS:
+            if kind == "campo" and t == team and n.rsplit(" ", 1)[0] in names:
+                got = "top" if y - x > 1200 else "bot" if y - x < -1200 else "centro"
+                if got != sd:
+                    bad.append(f"{n} ({sd})")
+    check(not bad, "pré-jogo: campos sugeridos ficam no lado recomendado" + (f" (errados: {bad})" if bad else ""))
 
 
 # ----------------------------------------------------------------------------- 3. dados
