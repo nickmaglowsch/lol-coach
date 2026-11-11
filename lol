@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Lançador do lol-coach: lol <comando> [args]. Veja CLAUDE.md.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PY="${LOL_PYTHON:-}"
+if [ -z "$PY" ]; then
+  if command -v python >/dev/null 2>&1 && python -c "import sys; sys.exit(sys.version_info < (3, 10))" >/dev/null 2>&1; then PY=python
+  elif [ -x "$HOME/AppData/Local/mise/shims/python.exe" ]; then PY="$HOME/AppData/Local/mise/shims/python.exe"
+  else echo "Python 3.10+ não encontrado (defina LOL_PYTHON)" >&2; exit 1; fi
+fi
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  list|fetch|fetch-many|static|icons) exec "$PY" "$ROOT/tools/fetch.py" "$cmd" "$@" ;;
+  summarize|sum)                exec "$PY" "$ROOT/tools/summarize.py" "$@" ;;
+  find|frames|events|at|series|players) exec "$PY" "$ROOT/tools/query.py" "$cmd" "$@" ;;
+  where)                        exec "$PY" "$ROOT/tools/landmarks.py" "$@" ;;
+  render)                       exec "$PY" "$ROOT/tools/render.py" "$@" ;;
+  validate)                     exec "$PY" "$ROOT/tools/zones.py" validate ;;
+  *) sed -n '/^## Ferramentas/,/^## /p' "$ROOT/CLAUDE.md" | head -60 ;;
+esac

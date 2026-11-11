@@ -1,0 +1,28 @@
+# Dados baixados e gerados (cache local; contêm PUUIDs e nicks de jogadores)
+data/
+
+# Relatórios gerados (análises pessoais); mantém só a pasta
+reports/*
+!reports/.gitkeep
+
+# Preferências pessoais para o Claude Code
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Arte da Riot Games: baixe você mesmo (veja o README)
+tools/templates/assets/*.png
+
+# Credenciais / segredos
+.env
+.env.*
+*.key
+*secret*
+*credential*
+*token*
+lockfile
+riot_api_key*
+
+# Python
+__pycache__/
+*.pyc
+.venv/

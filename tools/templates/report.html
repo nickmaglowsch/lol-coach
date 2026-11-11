@@ -1,0 +1,594 @@
+<meta charset="utf-8">
+<title><!--TITLE--></title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Gerado por tools/render.py a partir de um spec de análise + data/summaries/<gameId>.json. Não editar à mão.
+   Layout: coluna única (~880px); gráficos e mapas em SVG desenhados pelos dados embutidos no fim da página.
+   Cores: --ally = time do jogador em foco, --enemy = time adversário (independe do lado azul/vermelho). */
+:root {
+  --bg: #F2F4F7; --surface: #FFFFFF; --ink: #121923; --muted: #586274; --line: #D8DDE5;
+  --ally: #2560C6; --enemy: #C23A33; --gold: #9C6A0E;
+  --ok: #17845A; --bad: #B0265C; --unk: #677080;
+  --jungle: #DDE5D8; --river: #BCD7EC; --lane: #CFC7B4; --base: #E6DCC8; --on-dot: #FFFFFF;
+  --camp: #6F7A62; --buff-b: #3E7FD0; --buff-r: #D0563E; --pit-b: #8A5CC9; --pit-d: #D9822B; --dead: #A9AEB6;
+  --m-wall: #12223A; --m-wall-2: #1A2F4B; --m-path: #C9C89B; --m-path-edge: #A6A77B; --m-river: #3D9DD0; --m-river-2: #67B8E0;
+  --m-base: #8DA2B4; --m-base-2: #A9BBC9; --m-text: #F4F6F8; --m-halo: #0C1828; --m-camp: #F4F1E1;
+  --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0D1218; --surface: #151C26; --ink: #E5EAF1; --muted: #9AA4B4; --line: #283241;
+  --ally: #5E95F2; --enemy: #EE6A61; --gold: #E1AE4C;
+  --ok: #3DBE85; --bad: #EE6E9C; --unk: #9AA3B1;
+  --jungle: #1B2A21; --river: #17324A; --lane: #3B3A31; --base: #262A30; --on-dot: #0D1218;
+  --camp: #8C9A7C; --buff-b: #6FA6EE; --buff-r: #EE8065; --pit-b: #B48CF0; --pit-d: #F0A65A; --dead: #4A525E; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0D1218; --surface: #151C26; --ink: #E5EAF1; --muted: #9AA4B4; --line: #283241;
+  --ally: #5E95F2; --enemy: #EE6A61; --gold: #E1AE4C;
+  --ok: #3DBE85; --bad: #EE6E9C; --unk: #9AA3B1;
+  --jungle: #1B2A21; --river: #17324A; --lane: #3B3A31; --base: #262A30; --on-dot: #0D1218;
+  --camp: #8C9A7C; --buff-b: #6FA6EE; --buff-r: #EE8065; --pit-b: #B48CF0; --pit-d: #F0A65A; --dead: #4A525E; color-scheme: dark }
+
+body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--body); }
+.wrap { max-width: 880px; margin: 0 auto; padding-block: 28px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 40px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.05; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(34px, 7vw, 54px); letter-spacing: .01em; }
+h2 { font-size: 28px; letter-spacing: .01em; }
+h3 { font-size: 20px; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+.eyebrow { font: 600 12px/1 var(--body); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+time { font-family: var(--mono); font-size: .92em; font-variant-numeric: tabular-nums; }
+.ally { color: var(--ally); } .enemy { color: var(--enemy); }
+section { display: grid; gap: 16px; min-width: 0; }
+.sub { color: var(--muted); }
+header { display: grid; gap: 14px; }
+.score { display: flex; flex-wrap: wrap; gap: 10px 28px; align-items: baseline; font-family: var(--display); }
+.score b { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.score span { font: 500 13px var(--body); color: var(--muted); display: block; }
+.note { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 12px 14px; font-size: 14px; color: var(--muted); }
+.note strong { color: var(--ink); }
+.tldr { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+.cards { display: grid; gap: 10px; }
+.card { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 4px 14px; align-items: start;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.card-n { font: 700 30px/1 var(--display); color: var(--gold); font-variant-numeric: tabular-nums; }
+.card-body { display: grid; gap: 4px; min-width: 0; }
+.card-body h3 { font-size: 19px; }
+.card-body p { margin: 0; }
+.fig { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 10px; min-width: 0; }
+.fig svg { width: 100%; height: auto; display: block; overflow: visible; }
+.scroll { overflow-x: auto; }
+.scroll svg { min-width: 620px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); }
+.legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+.ax { stroke: var(--line); stroke-width: 1; }
+.ax0 { stroke: var(--muted); stroke-width: 1; }
+.tick { fill: var(--muted); font: 11px var(--mono); }
+.lbl { fill: var(--ink); font: 600 12px var(--body); paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round; }
+.lblm { fill: var(--muted); font: 12px var(--body); }
+.band { fill: var(--enemy); opacity: .09; }
+.cap { font-size: 13px; color: var(--muted); }
+.verdicts { display: grid; gap: 12px; }
+.v { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 10px; }
+.v-head { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; }
+.v-head h3 { flex: 1 1 260px; }
+.chip { font: 700 12px/1 var(--body); letter-spacing: .08em; text-transform: uppercase; padding: 6px 9px; border-radius: 999px; border: 1.5px solid currentColor; white-space: nowrap; }
+.chip.ok { color: var(--ok); } .chip.bad { color: var(--bad); } .chip.unk { color: var(--unk); }
+.v ul, .plain { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.m-jungle { fill: var(--jungle); } .m-river { stroke: var(--river); fill: none; stroke-linecap: round; }
+.m-lane { stroke: var(--lane); fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.m-base { fill: var(--base); } .m-pit { fill: var(--river); }
+.m-lane-edge { stroke: var(--line); fill: none; stroke-linecap: round; stroke-linejoin: round; opacity: .6; }
+.rp-hud2 b { font-size: 18px !important; }
+.chk { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--muted); cursor: pointer; }
+.chk input { accent-color: var(--gold); width: 16px; height: 16px; }
+.mapkey { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); }
+.mapkey i { display: inline-block; width: 9px; height: 9px; margin-right: 5px; vertical-align: middle; }
+.num { fill: var(--on-dot); font: 700 8px var(--body); text-anchor: middle; dominant-baseline: central; }
+.mtxt { fill: var(--m-text); font: 600 9px var(--body); paint-order: stroke; stroke: var(--m-halo); stroke-width: 3px; stroke-linejoin: round; }
+.mapsvg [stroke="var(--surface)"] { stroke: var(--m-text); }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; }
+.steps li { display: grid; grid-template-columns: 64px 14px 1fr; gap: 10px; align-items: start; padding-bottom: 12px; position: relative; }
+.steps li::after { content: ""; position: absolute; left: 80px; top: 16px; bottom: 0; width: 2px; background: var(--line); }
+.steps li:last-child::after { display: none; }
+.pip { width: 12px; height: 12px; border-radius: 50%; margin-top: 4px; position: relative; z-index: 1; }
+.pip.a { background: var(--ally); } .pip.e { background: var(--enemy); } .pip.n { background: var(--muted); }
+.strip, .strip-labels, .marks { display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 3px; }
+.cell { height: 34px; border-radius: 4px; display: grid; place-items: center; font: 600 11px var(--mono); color: var(--on-dot); }
+.c-bot { background: var(--ally); } .c-top { background: var(--gold); } .c-mid { background: var(--unk); } .c-base { background: var(--line); color: var(--muted); }
+.strip-labels { font: 11px var(--mono); color: var(--muted); text-align: center; }
+.marks { font-size: 11px; line-height: 1.2; text-align: center; min-height: 30px; }
+.marks .a { color: var(--ally); font-weight: 600; } .marks .e { color: var(--enemy); font-weight: 600; }
+.recs { counter-reset: r; list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+.recs li { counter-increment: r; display: grid; grid-template-columns: 40px 1fr; gap: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.recs li::before { content: counter(r); font: 700 30px/1 var(--display); color: var(--gold); }
+.recs strong:first-child { display: block; margin-bottom: 2px; }
+.limits { font-size: 13px; color: var(--muted); display: grid; gap: 4px; padding-left: 18px; margin: 0; }
+footer { font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.btn, .tog { font: 600 13px var(--body); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+.btn:hover, .tog:hover { border-color: var(--muted); }
+.btn:focus-visible, .tog:focus-visible, input[type=range]:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.tog { font-weight: 500; color: var(--muted); padding: 3px 8px; }
+.tog[aria-pressed="false"] { opacity: .45; text-decoration: line-through; }
+.rp { gap: 14px; }
+.fig > * { min-width: 0; }
+.rp-top { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.rp-side { display: grid; gap: 10px; min-width: 0; }
+.rp-hud { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.rp-hud div { display: grid; gap: 4px; }
+.rp-hud b { font: 600 26px/1 var(--display); font-variant-numeric: tabular-nums; }
+.rp-feed { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13px; min-height: 9em; }
+.rp-feed li { display: grid; grid-template-columns: 46px 10px 1fr; gap: 8px; align-items: baseline; }
+.rp-feed li .pip { margin-top: 0; width: 9px; height: 9px; }
+.rp-feed li.old { opacity: .55; }
+.rp-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+#rpPlay { width: 40px; font-size: 15px; }
+.rp-jumps { display: flex; gap: 6px; overflow-x: auto; flex: 1 1 260px; min-width: 0; padding-bottom: 2px; }
+.rp-jumps .btn { white-space: nowrap; font-weight: 500; font-size: 12px; padding: 4px 8px; }
+#rpTrack { width: 100%; height: auto; display: block; cursor: pointer; }
+#rpSlider { width: 100%; margin: 0; accent-color: var(--gold); }
+@media (max-width: 640px) { .rp-top { grid-template-columns: 1fr; } .rp-hud b { font-size: 22px; } }
+@media (max-width: 520px) { .cell { height: 26px; font-size: 9px; } .marks { font-size: 9px; } }
+</style>
+
+<div class="wrap">
+<!--BODY-->
+</div>
+
+<script type="application/json" id="report-data">/*DATA*/</script>
+<script>
+(function () {
+  const D = JSON.parse(document.getElementById("report-data").textContent);
+  const NS = "http://www.w3.org/2000/svg";
+  const el = (tag, attrs, parent, text) => {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (text != null) n.textContent = text;
+    if (parent) parent.appendChild(n);
+    return n;
+  };
+  const fmt = v => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(Math.round(v)).toLocaleString("pt-BR");
+  const C = t => t === "a" ? "var(--ally)" : t === "e" ? "var(--enemy)" : "var(--muted)";
+
+  // ---------------- gráfico de ouro
+  (function () {
+    const svg = document.getElementById("goldChart"); if (!svg || !D.gold) return;
+    const g = D.gold, W = 820, H = 300, L = 54, R = 16, T = 26, B = 34;
+    const tMax = g.minutes[g.minutes.length - 1];
+    const x = m => L + (m / tMax) * (W - L - R);
+    const all = g.team.concat(g.duel || []);
+    const step = 2000;
+    const yMin = Math.min(-step, Math.floor(Math.min(...all) / step) * step), yMax = Math.max(step, Math.ceil(Math.max(...all) / step) * step);
+    const y = v => T + (yMax - v) / (yMax - yMin) * (H - T - B);
+    (g.bands || []).forEach(b => {
+      el("rect", { x: x(b[0]), y: T, width: Math.max(2, x(b[1]) - x(b[0])), height: H - T - B, class: "band" }, svg);
+      el("text", { x: (x(b[0]) + x(b[1])) / 2, y: T - 8, "text-anchor": "middle", class: "lblm" }, svg, b[2]);
+    });
+    for (let v = yMin; v <= yMax; v += step) {
+      el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: v === 0 ? "ax0" : "ax" }, svg);
+      el("text", { x: L - 8, y: y(v) + 4, "text-anchor": "end", class: "tick" }, svg, v === 0 ? "0" : (v / 1000) + "k");
+    }
+    for (let m = 0; m <= tMax; m += 5) el("text", { x: x(m), y: H - 12, "text-anchor": "middle", class: "tick" }, svg, m + "'");
+    const pts = arr => arr.map((v, i) => x(g.minutes[i]).toFixed(1) + " " + y(v).toFixed(1));
+    el("path", { d: "M" + x(0) + " " + y(0) + " L" + pts(g.team).join(" L") + " L" + x(tMax) + " " + y(0) + " Z", fill: "var(--ally)", opacity: .12 }, svg);
+    el("path", { d: "M" + pts(g.team).join(" L"), fill: "none", stroke: "var(--ally)", "stroke-width": 2.4, "stroke-linejoin": "round" }, svg);
+    if (g.duel) el("path", { d: "M" + pts(g.duel).join(" L"), fill: "none", stroke: "var(--gold)", "stroke-width": 2, "stroke-linejoin": "round" }, svg);
+    (g.notes || []).forEach(n => {
+      const [m, v, txt] = n, right = x(m) > W * 0.62;
+      el("circle", { cx: x(m), cy: y(v), r: 4, fill: "var(--surface)", stroke: "var(--ink)", "stroke-width": 1.5 }, svg);
+      el("text", { x: x(m) + (right ? -8 : 8), y: y(v) + (v < 0 ? 18 : -10), "text-anchor": right ? "end" : "start", class: "lbl" }, svg, txt);
+    });
+  })();
+
+  // ---------------- faixa de zonas
+  (function () {
+    const s = D.strip; if (!s) return;
+    const strip = document.getElementById("strip"), lbl = document.getElementById("stripLbl"), marks = document.getElementById("marks");
+    [strip, lbl, marks].forEach(e => e.style.setProperty("--n", s.cells.length));
+    s.cells.forEach(c => {
+      const d = document.createElement("div"); d.className = "cell c-" + c.side; d.textContent = c.side; d.title = c.title; strip.appendChild(d);
+      const l = document.createElement("div"); l.textContent = c.minute + "'"; lbl.appendChild(l);
+      const k = document.createElement("div");
+      c.marks.forEach((m, i) => { if (i) k.appendChild(document.createElement("br")); const sp = document.createElement("span"); sp.className = m[0]; sp.textContent = m[1]; k.appendChild(sp); });
+      marks.appendChild(k);
+    });
+  })();
+
+  // ---------------- mapa
+  const S = 300, MAP = 14900;
+  const mx = v => v / MAP * S, my = v => S - v / MAP * S;
+  const pt = p => mx(p[0]).toFixed(1) + "," + my(p[1]).toFixed(1);
+  // ---- mapa do Summoner's Rift: lanes passando pelas torres reais, rio, fossos, bases, campos e estruturas.
+  // Esquemático (sem paredes), mas as coordenadas de torres/inibidores são as dos eventos do jogo.
+  const mirror = p => [14800 - p[0], 14900 - p[1]];
+  const LANE_TOP = [[1172,3583],[1169,4287],[1512,6699],[981,10441],[1250,12650],[2150,13650],[4318,13875],[7943,13411],[10481,13650],[11275,13657]];
+  const LANE_BOT = LANE_TOP.map(mirror).reverse();   // do inibidor azul ao vermelho
+  const LANE_MID = [[3210,3217],[11593,11669]];
+  const RIVER = [[1350,13550],[2900,12000],[4300,11000],[5900,9550],[7400,7450],[8900,5350],[10500,3900],[11900,2900],[13450,1350]];
+  const CAMPS_B = [["blue",3821,8101],["gromp",2288,8448],["lobos",3780,6443],["aves",6943,5422],["red",7765,4020],["krugs",8394,2641]];
+  const CAMPS = CAMPS_B.map(c => ({ k: c[0], p: [c[1], c[2]], side: "b" })).concat(CAMPS_B.map(c => ({ k: c[0], p: mirror([c[1], c[2]]), side: "r" })));
+  const smooth = pts => { let d = "M" + pt(pts[0]).replace(",", " "); for (let i = 1; i < pts.length - 1; i++) { const m = [(pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2]; d += " Q" + pt(pts[i]).replace(",", " ") + " " + pt(m).replace(",", " "); } return d + " L" + pt(pts[pts.length - 1]).replace(",", " "); };
+  const blueSide = D.replay ? D.replay.blue : "a";
+  function structDown(st, t) {
+    if (t == null) return false;
+    if (st.k === "inhib") return st.down.some(d => d <= t && t < d + 300000);  // inibidor renasce em 5 min (regra do jogo)
+    return st.down.some(d => d <= t);
+  }
+  // Trilhas da jungle do lado azul (ligam campos, rio e lanes); o lado vermelho é o espelho. Aproximadas.
+  const JPATHS_B = [
+    [[1400,7600],[2288,8448],[3200,8550],[3821,8101]], [[3821,8101],[4400,9000],[4900,9700]],
+    [[2700,4900],[3300,5700],[3780,6443],[3821,8101]], [[3780,6443],[4700,6550],[5400,6250]],
+    [[2288,8448],[2450,9800],[3300,10900]], [[3821,8101],[5100,8250],[6300,7900]],
+    [[4900,2700],[5800,3300],[6800,3700],[7765,4020]], [[7765,4020],[8394,2641],[8800,1450]],
+    [[6943,5422],[7765,4020]], [[6150,6150],[6943,5422],[7900,5650],[8650,6050]],
+    [[7765,4020],[8800,4450],[9450,4950]], [[8394,2641],[9600,3000],[10450,3600]]];
+  const JPATHS = JPATHS_B.concat(JPATHS_B.map(l => l.map(mirror)));
+  function drawMap(svg, t) {
+    svg.classList.add("mapsvg");
+    if (D.mapImg) {
+      // minimapa oficial (League of Legends Wiki) como fundo; cobre o mapa inteiro, então usa a mesma escala mx/my
+      const id = "clip" + Math.random().toString(36).slice(2, 8);
+      const cp = el("clipPath", { id }, el("defs", {}, svg));
+      el("rect", { x: 0, y: 0, width: S, height: S, rx: 12 }, cp);
+      el("image", { href: D.mapImg, x: 0, y: 0, width: S, height: S, preserveAspectRatio: "none", "clip-path": `url(#${id})` }, svg);
+    } else {
+    // paredes (fundo escuro) com moldura
+    el("rect", { x: 0, y: 0, width: S, height: S, rx: 12, fill: "var(--m-wall)" }, svg);
+    el("rect", { x: 3, y: 3, width: S - 6, height: S - 6, rx: 10, fill: "none", stroke: "var(--m-wall-2)", "stroke-width": 2 }, svg);
+    // trilhas da jungle
+    JPATHS.forEach(l => {
+      el("path", { d: smooth(l), fill: "none", stroke: "var(--m-path-edge)", "stroke-width": 8.5, "stroke-linecap": "round", "stroke-linejoin": "round" }, svg);
+      el("path", { d: smooth(l), fill: "none", stroke: "var(--m-path)", "stroke-width": 6.5, "stroke-linecap": "round", "stroke-linejoin": "round" }, svg);
+    });
+    // lanes (faixa clara larga) passando pelas torres reais
+    [LANE_TOP, LANE_BOT, LANE_MID].forEach(l => {
+      el("polyline", { points: l.map(pt).join(" "), fill: "none", stroke: "var(--m-path-edge)", "stroke-width": 17, "stroke-linecap": "round", "stroke-linejoin": "round" }, svg);
+      el("polyline", { points: l.map(pt).join(" "), fill: "none", stroke: "var(--m-path)", "stroke-width": 14, "stroke-linecap": "round", "stroke-linejoin": "round" }, svg);
+    });
+    // rio e fossos
+    el("path", { d: smooth(RIVER), fill: "none", stroke: "var(--m-river)", "stroke-width": 20, "stroke-linecap": "round", "stroke-linejoin": "round", opacity: .95 }, svg);
+    el("path", { d: smooth(RIVER), fill: "none", stroke: "var(--m-river-2)", "stroke-width": 6, "stroke-linecap": "round", opacity: .5 }, svg);
+    [[5007,10471,"var(--pit-b)"],[9866,4414,"var(--pit-d)"]].forEach(([x, y, c]) => {
+      el("circle", { cx: mx(x), cy: my(y), r: 14, fill: "var(--m-river)" }, svg);
+      el("circle", { cx: mx(x), cy: my(y), r: 8, fill: "none", stroke: c, "stroke-width": 2.6 }, svg);
+    });
+    // bases: plataforma cinza-azulada com as três saídas de lane até o nexus
+    const baseShape = (cx, cy, flip) => {
+      const R = mx(4900), s0 = flip ? -1 : 1, x0 = mx(cx), y0 = my(cy);
+      el("path", { d: `M${x0} ${y0} L${x0} ${y0 - s0 * R} A ${R} ${R} 0 0 ${flip ? 0 : 1} ${x0 + s0 * R} ${y0} Z`, fill: "var(--m-base)", stroke: "var(--m-base-2)", "stroke-width": 2 }, svg);
+    };
+    baseShape(0, 0, false); baseShape(14870, 14980, true);
+    [[[1520,1580],[1172,3583],[1169,4900]], [[1520,1580],[3210,3217],[3900,3900]], [[1520,1580],[3468,1230],[4900,1260]]].forEach(l => {
+      [l, l.map(mirror)].forEach(q => el("polyline", { points: q.map(pt).join(" "), fill: "none", stroke: "var(--m-base-2)", "stroke-width": 9, "stroke-linecap": "round", "stroke-linejoin": "round" }, svg));
+    });
+    el("circle", { cx: mx(400), cy: my(400), r: 9, fill: blueSide === "a" ? "var(--ally)" : "var(--enemy)", opacity: .55 }, svg);
+    el("circle", { cx: mx(14400), cy: my(14450), r: 9, fill: blueSide === "a" ? "var(--enemy)" : "var(--ally)", opacity: .55 }, svg);
+    }
+    // campos da jungle e scuttles
+    CAMPS.forEach(c => {
+      const buff = c.k === "blue" || c.k === "red";
+      el("circle", { cx: mx(c.p[0]), cy: my(c.p[1]), r: buff ? 4.2 : 3, fill: c.k === "blue" ? "var(--buff-b)" : c.k === "red" ? "var(--buff-r)" : "var(--m-camp)", stroke: "var(--m-halo)", "stroke-width": 1.2 }, svg);
+    });
+    [[4400,9600],[10500,5100]].forEach(p => el("circle", { cx: mx(p[0]), cy: my(p[1]), r: 2.8, fill: "var(--m-camp)", stroke: "var(--m-river)", "stroke-width": 1.2 }, svg));
+    if (!D.mapImg) {
+      el("text", { x: mx(500), y: my(14300), class: "mtxt" }, svg, "TOP");
+      el("text", { x: mx(12700), y: my(380), class: "mtxt" }, svg, "BOT");
+    }
+    // estruturas (torres ■, inibidores ◆, nexus ⬢) com estado no instante t
+    const marks = (D.structures || []).map(st => {
+      const x = mx(st.x), y = my(st.y), sz = st.k === "nexus" ? 6 : st.k === "inhib" ? 4 : 3.4;
+      const shape = st.k === "tower"
+        ? el("rect", { x: x - sz, y: y - sz, width: 2 * sz, height: 2 * sz, rx: 1, stroke: "var(--surface)", "stroke-width": 1 }, svg)
+        : el("polygon", { points: `${x},${y - sz} ${x + sz},${y} ${x},${y + sz} ${x - sz},${y}`, stroke: "var(--surface)", "stroke-width": 1 }, svg);
+      return { st, shape };
+    });
+    const update = tt => marks.forEach(({ st, shape }) => {
+      const dn = structDown(st, tt);
+      shape.setAttribute("fill", dn ? "var(--dead)" : C(st.t));
+      shape.setAttribute("opacity", dn ? .55 : 1);
+    });
+    update(t);
+    return update;
+  }
+  // Token de jogador: bolinha colorida e, se houver ícone do campeão, o retrato num círculo com aro da cor do time.
+  let tokSeq = 0;
+  function playerToken(parent, p) {
+    const svg = parent.ownerSVGElement || parent, uid = "tk" + (tokSeq++);
+    const g = el("g", {}, parent);
+    const dot = el("circle", { r: p.focus ? 7 : 5.5, fill: C(p.t), stroke: p.focus ? "var(--gold)" : "var(--surface)", "stroke-width": p.focus ? 2.4 : 1.2 }, g);
+    let icon = null;
+    const src = D.icons && p.cid != null ? D.icons[p.cid] : null;
+    if (src) {
+      let defs = svg.querySelector("defs") || el("defs", {}, svg);
+      if (!svg.querySelector("#gray-" + svg.id)) { const f = el("filter", { id: "gray-" + svg.id }, defs); el("feColorMatrix", { type: "saturate", values: "0" }, f); }
+      const R0 = p.focus ? 10 : 8.5;
+      const cp = el("clipPath", { id: uid }, defs); el("circle", { cx: 0, cy: 0, r: R0 }, cp);
+      icon = el("g", {}, g);
+      const img = el("image", { href: src, x: -R0, y: -R0, width: 2 * R0, height: 2 * R0, "clip-path": `url(#${uid})` }, icon);
+      el("circle", { r: R0 + .6, fill: "none", stroke: p.focus ? "var(--gold)" : C(p.t), "stroke-width": p.focus ? 2.8 : 2.2 }, icon);
+      icon._img = img;
+    }
+    return {
+      g, r: src ? (p.focus ? 12 : 10) : 7,
+      place(x, y) { g.setAttribute("transform", `translate(${x.toFixed(1)},${y.toFixed(1)})`); },
+      mode(useIcon) { if (!icon) return; icon.style.display = useIcon ? "" : "none"; dot.style.display = useIcon ? "none" : ""; },
+      dead(isDead) {
+        g.setAttribute("opacity", isDead ? .45 : 1);
+        if (icon) icon._img.setAttribute("filter", isDead ? `url(#gray-${svg.id})` : "");
+      },
+      iconOn() { return !!icon && icon.style.display !== "none"; },
+    };
+  }
+
+  const xMark = (svg, p, t) => {
+    const cx = mx(p[0]), cy = my(p[1]), r = 5;
+    el("line", { x1: cx - r, y1: cy - r, x2: cx + r, y2: cy + r, stroke: C(t), "stroke-width": 2.2, "stroke-linecap": "round" }, svg);
+    el("line", { x1: cx - r, y1: cy + r, x2: cx + r, y2: cy - r, stroke: C(t), "stroke-width": 2.2, "stroke-linecap": "round" }, svg);
+  };
+  const star = (svg, p) => {
+    const cx = mx(p[0]), cy = my(p[1]), out = [];
+    for (let i = 0; i < 10; i++) { const r = i % 2 ? 3 : 7.5, t = -Math.PI / 2 + i * Math.PI / 5; out.push((cx + r * Math.cos(t)).toFixed(1) + "," + (cy + r * Math.sin(t)).toFixed(1)); }
+    el("polygon", { points: out.join(" "), fill: "var(--gold)", stroke: "var(--surface)", "stroke-width": 1 }, svg);
+  };
+  // Rótulos sem sobreposição: testa posições ao redor do ponto e fica com a primeira livre
+  // (livre de outros rótulos e dos obstáculos: pontos, marcadores). Coordenadas em px do viewBox 300×300.
+  const short = n => n.length > 13 ? n.slice(0, 12) + "…" : n;  // nicks longos no mapa
+  const CANDS = [[8, 3, "start"], [8, -7, "start"], [8, 13, "start"], [-8, 3, "end"], [-8, -7, "end"], [-8, 13, "end"],
+                 [0, -10, "middle"], [0, 17, "middle"], [12, -17, "start"], [-12, -17, "end"], [12, 23, "start"], [-12, 23, "end"]];
+  function placeLabels(parent, items, obstacles) {
+    const boxes = (obstacles || []).map(o => ({ x0: o.x - o.r, y0: o.y - o.r, x1: o.x + o.r, y1: o.y + o.r }));
+    const hits = b => boxes.some(o => b.x0 < o.x1 && b.x1 > o.x0 && b.y0 < o.y1 && b.y1 > o.y0);
+    items.forEach(it => {
+      const w = it.text.length * 5.3 + 2;
+      const boxOf = (dx, dy, a) => { const x0 = a === "start" ? it.x + dx : a === "end" ? it.x + dx - w : it.x - w / 2; return { x0, y0: it.y + dy - 8, x1: x0 + w, y1: it.y + dy + 2 }; };
+      let pick = null;
+      for (const c of CANDS) {
+        const b = boxOf(...c);
+        if (b.x0 < 1 || b.x1 > 299 || b.y0 < 1 || b.y1 > 299 || hits(b)) continue;
+        pick = [c, b]; break;
+      }
+      if (!pick) { const c = it.x > 220 ? CANDS[3] : CANDS[0]; pick = [c, boxOf(...c)]; }
+      boxes.push(pick[1]);
+      el("text", { x: it.x + pick[0][0], y: it.y + pick[0][1], class: "mtxt", "text-anchor": pick[0][2] }, parent, it.text);
+    });
+  }
+
+  (function () {
+    const m = D.pathMap, svg = document.getElementById("mapPath"); if (!m || !svg) return;
+    drawMap(svg, m.at);
+    const gOpp = el("g", { "data-g": "opp" }, svg), gFoc = el("g", { "data-g": "focus" }, svg), gMark = el("g", {}, svg), gLbl = el("g", {}, svg);
+    const obstacles = [];
+    if (m.opp) {
+      el("polyline", { points: m.opp.map(pt).join(" "), stroke: "var(--enemy)", fill: "none", "stroke-dasharray": "3 3", "stroke-width": 1.2, opacity: .45 }, gOpp);
+      m.opp.forEach(p => el("circle", { cx: mx(p[0]), cy: my(p[1]), r: 3.2, fill: "var(--enemy)", opacity: .75 }, gOpp));
+    }
+    // pontos numerados: afasta um pouco os que cairiam em cima de outro
+    const placed = m.focus.map(p => {
+      let x = mx(p[0]), y = my(p[1]);
+      for (let k = 0; k < 4 && obstacles.some(o => Math.hypot(o.x - x, o.y - y) < 10); k++) { x += 7; y -= 7; }
+      obstacles.push({ x, y, r: 7 });
+      return [x, y];
+    });
+    el("polyline", { points: placed.map(q => q[0].toFixed(1) + "," + q[1].toFixed(1)).join(" "), stroke: "var(--ally)", fill: "none", "stroke-dasharray": "3 3", "stroke-width": 1.3, opacity: .6 }, gFoc);
+    const labels = [];
+    m.deaths.forEach(d => { [d.p, ...(d.extra || [])].forEach(q => { xMark(gMark, q, d.t); obstacles.push({ x: mx(q[0]), y: my(q[1]), r: 6 }); }); labels.push({ x: mx(d.p[0]), y: my(d.p[1]), text: d.label }); });
+    m.kills.forEach(k => { [k.p, ...(k.extra || [])].forEach(q => { star(gMark, q); obstacles.push({ x: mx(q[0]), y: my(q[1]), r: 7 }); }); labels.push({ x: mx(k.p[0]), y: my(k.p[1]), text: k.label }); });
+    placed.forEach(([x, y], i) => { el("circle", { cx: x, cy: y, r: 6, fill: "var(--ally)", stroke: "var(--surface)", "stroke-width": 1 }, gFoc); el("text", { x, y, class: "num" }, gFoc, m.from + i); });
+    placeLabels(gLbl, labels, obstacles);
+    svg.closest(".fig").querySelectorAll(".tog").forEach(b => b.addEventListener("click", () => {
+      const on = b.getAttribute("aria-pressed") !== "true";
+      b.setAttribute("aria-pressed", on);
+      const g = svg.querySelector(`[data-g="${b.dataset.g}"]`); if (g) g.style.display = on ? "" : "none";
+    }));
+  })();
+
+  (D.fights || []).forEach((f, idx) => {
+    const svg = document.getElementById("mapFight" + idx); if (!svg) return;
+    drawMap(svg, f.at);
+    (f.towers || []).forEach(tw => el("rect", { x: mx(tw.p[0]) - 4, y: my(tw.p[1]) - 4, width: 8, height: 8, fill: C(tw.t), stroke: "var(--surface)", "stroke-width": 1 }, svg));
+    (f.arrows || []).forEach(a => el("line", { x1: mx(a.from[0]), y1: my(a.from[1]), x2: mx(a.to[0]), y2: my(a.to[1]), stroke: C(a.t), "stroke-width": 1.6, "stroke-dasharray": "4 3" }, svg));
+    f.deaths.forEach(d => xMark(svg, d.p, d.t));
+    const toks = f.players.map(p => { const tk = playerToken(svg, p); tk.place(mx(p.p[0]), my(p.p[1])); tk.mode(true); tk.dead(!!p.dead); return tk; });
+    const obstacles = f.players.map((p, i) => ({ x: mx(p.p[0]), y: my(p.p[1]), r: toks[i].r })).concat(f.deaths.map(d => ({ x: mx(d.p[0]), y: my(d.p[1]), r: 5 })));
+    placeLabels(svg, f.players.map(p => ({ x: mx(p.p[0]), y: my(p.p[1]), text: short(p.name) })), obstacles);
+  });
+
+  // ---------------- replay interativo
+  (function () {
+    const R = D.replay, svg = document.getElementById("replayMap"); if (!R || !svg) return;
+    const $ = id => document.getElementById(id);
+    const updStructs = drawMap(svg, R.start);
+    const gW = el("g", {}, svg), gEv = el("g", {}, svg), gP = el("g", {}, svg), gL = el("g", {}, svg);
+
+    // waves de minions: SIMULAÇÃO pelas regras (1ª wave 0:30, uma a cada 30 s, ~325 unidades/s, se encontram no meio
+    // da lane). Não vem dos dados: não mostra push, freeze nem wave morta por campeão.
+    const WAVE_FIRST = 30000, WAVE_EVERY = 30000, WAVE_SPEED = 0.325, CLASH_MS = 20000;
+    const laneGeo = [LANE_TOP, LANE_MID, LANE_BOT].map(l => {
+      const seg = []; let L = 0;
+      for (let i = 1; i < l.length; i++) { const d = Math.hypot(l[i][0] - l[i - 1][0], l[i][1] - l[i - 1][1]); seg.push([L, d, l[i - 1], l[i]]); L += d; }
+      return { seg, L };
+    });
+    const along = (g, d) => {
+      for (const [s0, len, a, b] of g.seg) if (d <= s0 + len) { const r = (d - s0) / len; return [a[0] + (b[0] - a[0]) * r, a[1] + (b[1] - a[1]) * r]; }
+      const last = g.seg[g.seg.length - 1]; return last[3];
+    };
+    const redSide = blueSide === "a" ? "e" : "a";
+    const waveDot = (p, side, dx) => el("circle", { cx: mx(p[0]) + dx, cy: my(p[1]) + (dx ? 1.5 : -1.5), r: 2.3, fill: C(side), stroke: "var(--surface)", "stroke-width": .6, opacity: .9 }, gW);
+    function drawWaves(t) {
+      gW.replaceChildren();
+      if (!$("rpWaves") || !$("rpWaves").checked) return;
+      laneGeo.forEach(g => {
+        const half = g.L / 2;
+        for (let s0 = WAVE_FIRST; s0 <= t; s0 += WAVE_EVERY) {
+          const d = (t - s0) * WAVE_SPEED;
+          if (d < half) { waveDot(along(g, d), blueSide, 0); waveDot(along(g, g.L - d), redSide, 0); }
+          else if (d < half + CLASH_MS * WAVE_SPEED) { const p = along(g, half); waveDot(p, blueSide, -2.2); waveDot(p, redSide, 2.2); }
+        }
+      });
+    }
+    const n = R.players[0].xy.length / 3;
+    const toks = R.players.map(p => playerToken(gP, p));
+    const posAt = (p, t) => {
+      const f = Math.max(0, t) / R.step, i = Math.min(n - 1, Math.floor(f)), j = Math.min(n - 1, i + 1), r = f - i, a = i * 3, b = j * 3, q = p.xy;
+      if (q[a + 2]) return [q[a], q[a + 1], true];
+      return [q[a] + (q[b] - q[a]) * r, q[a + 1] + (q[b + 1] - q[a + 1]) * r, false];
+    };
+    const goldAt = t => {
+      if (!D.gold) return null;
+      const m = t / 60000, M = D.gold.minutes, T = D.gold.team;
+      for (let i = 1; i < M.length; i++) if (m <= M[i]) return T[i - 1] + (T[i] - T[i - 1]) * (m - M[i - 1]) / (M[i] - M[i - 1]);
+      return T[T.length - 1];
+    };
+    const mmss = t => { const s = Math.round(t / 1000); return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0"); };
+
+    // linha do tempo de baixo: ouro do time + marcas de eventos + cursor
+    const track = $("rpTrack"), TW = 820, TL = 10, TR = 10, tx = t => TL + t / R.duration * (TW - TL - TR);
+    if (D.gold) {
+      const M = D.gold.minutes, T = D.gold.team, lim = Math.max(1000, ...T.map(Math.abs)), gy = v => 56 - v / lim * 24;
+      el("line", { x1: TL, x2: TW - TR, y1: 56, y2: 56, class: "ax" }, track);
+      el("path", { d: "M" + tx(0) + " 56 " + M.map((m, i) => "L" + tx(m * 60000).toFixed(1) + " " + gy(T[i]).toFixed(1)).join(" ") + " L" + tx(M[M.length - 1] * 60000) + " 56 Z", fill: "var(--ally)", opacity: .18 }, track);
+      el("path", { d: M.map((m, i) => (i ? "L" : "M") + tx(m * 60000).toFixed(1) + " " + gy(T[i]).toFixed(1)).join(" "), fill: "none", stroke: "var(--ally)", "stroke-width": 1.6 }, track);
+      el("text", { x: TL + 4, y: 40, class: "lblm" }, track, "ouro do time");
+    }
+    R.events.forEach(e => {
+      if (e.k === "kill") el("line", { x1: tx(e.ts), x2: tx(e.ts), y1: e.t === "a" ? 4 : 13, y2: e.t === "a" ? 11 : 20, stroke: C(e.t), "stroke-width": 1.4 }, track);
+      else if (e.k === "epic") el("circle", { cx: tx(e.ts), cy: 27, r: 3.4, fill: C(e.t) }, track);
+    });
+    for (let m = 0; m * 60000 <= R.duration; m += 5) el("text", { x: tx(m * 60000), y: 82, "text-anchor": "middle", class: "tick" }, track, m ? m + "'" : "");
+    const cursor = el("line", { x1: 0, x2: 0, y1: 0, y2: 72, stroke: "var(--gold)", "stroke-width": 2 }, track);
+
+    const slider = $("rpSlider"), play = $("rpPlay"), speed = $("rpSpeed"), feed = $("rpFeed");
+    let cur = R.start, playing = false, last = 0;
+    function render(t) {
+      cur = Math.max(0, Math.min(R.duration, t));
+      const items = [], obstacles = [];
+      R.players.forEach((p, i) => {
+        const [x, y, dead] = posAt(p, cur), px = mx(x), py = my(y);
+        const useIcon = !$("rpIcons") || $("rpIcons").checked;
+        toks[i].mode(useIcon); toks[i].place(px, py); toks[i].dead(dead);
+        obstacles.push({ x: px, y: py, r: toks[i].iconOn() ? toks[i].r : 7 });
+        items.push({ x: px, y: py, text: short(p.name) + (dead ? " ✝" : "") });
+      });
+      updStructs(cur);
+      drawWaves(cur);
+      gEv.replaceChildren();
+      R.events.forEach(e => {
+        const age = cur - e.ts; if (age < 0 || age > 25000) return;
+        const g = el("g", { opacity: (1 - age / 25000 * .7).toFixed(2) }, gEv);
+        if (e.k === "kill") xMark(g, [e.x, e.y], e.v);
+        else if (e.k === "epic") star(g, [e.x, e.y]);
+        else el("rect", { x: mx(e.x) - 4, y: my(e.y) - 4, width: 8, height: 8, fill: C(e.t), stroke: "var(--surface)" }, g);
+        obstacles.push({ x: mx(e.x), y: my(e.y), r: 6 });
+      });
+      gL.replaceChildren();
+      placeLabels(gL, items, obstacles);
+      const past = R.events.filter(e => e.ts <= cur);
+      $("rpClock").textContent = mmss(cur);
+      $("rpKa").textContent = past.filter(e => e.k === "kill" && e.t === "a").length;
+      $("rpKe").textContent = past.filter(e => e.k === "kill" && e.t === "e").length;
+      const cnt = (ty, side) => past.filter(e => e.ty === ty && e.t === side).length;
+      [["Drag", "DRAGON"], ["Baron", "BARON_NASHOR"], ["Tower", "TOWER"]].forEach(([id, ty]) => {
+        const e1 = $("rp" + id); if (e1) e1.innerHTML = `<span class="ally">${cnt(ty, "a")}</span> × <span class="enemy">${cnt(ty, "e")}</span>`;
+      });
+      const g = goldAt(cur), gEl = $("rpGold");
+      gEl.textContent = g == null ? "—" : fmt(g); gEl.className = g >= 0 ? "ally" : "enemy";
+      feed.replaceChildren(...past.slice(-6).reverse().map(e => {
+        const li = document.createElement("li"); if (cur - e.ts > 60000) li.className = "old";
+        const tm = document.createElement("time"); tm.textContent = e.time;
+        const pp = document.createElement("span"); pp.className = "pip " + (e.t === "a" ? "a" : e.t === "e" ? "e" : "n");
+        const tx_ = document.createElement("span"); tx_.textContent = e.text;
+        li.append(tm, pp, tx_); return li;
+      }));
+      if (!past.length) { const li = document.createElement("li"); li.textContent = "Nenhum evento ainda."; feed.append(li); }
+      cursor.setAttribute("x1", tx(cur)); cursor.setAttribute("x2", tx(cur));
+      slider.value = cur;
+    }
+    function stop() { playing = false; play.textContent = "▶"; play.setAttribute("aria-label", "Reproduzir"); }
+    function frame(ts) {
+      if (!playing) return;
+      if (last) render(cur + (ts - last) * Number(speed.value));
+      last = ts;
+      if (cur >= R.duration) { stop(); return; }
+      requestAnimationFrame(frame);
+    }
+    play.addEventListener("click", () => {
+      if (playing) { stop(); return; }
+      if (cur >= R.duration) render(0);
+      playing = true; last = 0; play.textContent = "❚❚"; play.setAttribute("aria-label", "Pausar");
+      requestAnimationFrame(frame);
+    });
+    slider.addEventListener("input", () => { stop(); render(Number(slider.value)); });
+    if ($("rpWaves")) $("rpWaves").addEventListener("change", () => render(cur));
+    if ($("rpIcons")) $("rpIcons").addEventListener("change", () => render(cur));
+    track.addEventListener("click", ev => {
+      const r = track.getBoundingClientRect(), x = (ev.clientX - r.left) / r.width * TW;
+      stop(); render((x - TL) / (TW - TL - TR) * R.duration);
+    });
+    R.jumps.forEach(j => {
+      const b = document.createElement("button"); b.type = "button"; b.className = "btn"; b.textContent = j.label;
+      b.addEventListener("click", () => { stop(); render(j.ts); });
+      $("rpJumps").append(b);
+    });
+    render(R.start);
+  })();
+
+  // ---------------- barras de lane
+  (function () {
+    const l = D.lane, svg = document.getElementById("laneChart"); if (!l || !svg) return;
+    const W = 320, H = 230, L = 46, R = 8, T = 14, B = 26;
+    const step = 500;
+    const vMin = Math.min(-step, Math.floor(Math.min(...l.values) / step) * step), vMax = Math.max(step, Math.ceil(Math.max(...l.values) / step) * step);
+    const y = v => T + (vMax - v) / (vMax - vMin) * (H - T - B);
+    const bw = (W - L - R) / l.values.length;
+    const every = Math.ceil(((vMax - vMin) / step) / 5);
+    for (let v = vMin, i = 0; v <= vMax; v += step, i++) {
+      if (v !== 0 && i % every) continue;
+      el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: v === 0 ? "ax0" : "ax" }, svg);
+      el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end", class: "tick" }, svg, v === 0 ? "0" : fmt(v));
+    }
+    l.values.forEach((v, i) => {
+      const x0 = L + i * bw + 3, w = Math.max(2, bw - 6);
+      el("rect", { x: x0, y: Math.min(y(v), y(0)), width: w, height: Math.max(1, Math.abs(y(v) - y(0))), rx: 2, fill: v >= 0 ? "var(--ally)" : "var(--enemy)" }, svg);
+      el("text", { x: x0 + w / 2, y: H - 8, "text-anchor": "middle", class: "tick" }, svg, (l.from + i) + "'");
+    });
+    (l.marks || []).forEach(m => {
+      const xx = L + (m[0] - l.from) * bw + bw / 2;
+      el("line", { x1: xx, x2: xx, y1: T, y2: H - B, stroke: "var(--muted)", "stroke-dasharray": "3 3" }, svg);
+      el("text", { x: xx + 4, y: T + 8, class: "lblm" }, svg, m[1]);
+    });
+  })();
+
+  // ---------------- objetivos
+  (function () {
+    const o = D.objectives, svg = document.getElementById("objChart"); if (!o || !svg) return;
+    const W = 820, L = 20, R = 20;
+    const tMax = D.gold ? D.gold.minutes[D.gold.minutes.length - 1] : Math.max(...o.items.map(i => i.m)) + 2;
+    const x = m => L + (m / tMax) * (W - L - R);
+    const lanes = { a: [], e: [] };
+    o.items.forEach(it => { const used = lanes[it.t]; let lvl = 0; while (used.some(u => u.lvl === lvl && Math.abs(u.x - x(it.m)) < 92)) lvl++; used.push({ x: x(it.m), lvl }); it.lvl = lvl; });
+    const upN = Math.max(0, ...lanes.a.map(u => u.lvl)) + 1, dnN = Math.max(0, ...lanes.e.map(u => u.lvl)) + 1;
+    const mid = 30 + upN * 30, H = mid + 30 + dnN * 30;
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    el("line", { x1: L, x2: W - R, y1: mid, y2: mid, class: "ax0" }, svg);
+    for (let m = 0; m <= tMax; m += 5) {
+      el("line", { x1: x(m), x2: x(m), y1: mid - 4, y2: mid + 4, class: "ax0" }, svg);
+      el("text", { x: x(m), y: mid + 18, "text-anchor": "middle", class: "tick" }, svg, m + "'");
+    }
+    o.items.forEach(it => {
+      const up = it.t === "a", xx = x(it.m), yy = up ? mid - 26 - it.lvl * 30 : mid + 40 + it.lvl * 30;
+      el("line", { x1: xx, x2: xx, y1: mid, y2: up ? yy + 6 : yy - 16, stroke: C(it.t), "stroke-width": 1.5 }, svg);
+      el("circle", { cx: xx, cy: mid, r: 5, fill: C(it.t) }, svg);
+      el("text", { x: xx, y: yy - 6, "text-anchor": "middle", class: "lbl" }, svg, it.label);
+      el("text", { x: xx, y: yy + 6, "text-anchor": "middle", class: "tick" }, svg, it.time);
+    });
+  })();
+})();
+</script>
