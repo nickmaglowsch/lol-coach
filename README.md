@@ -10,6 +10,8 @@ Coach de League of Legends baseado nos **dados da timeline** das suas partidas, 
 - **Resumo por minuto** dos 10 jogadores: zona do mapa (top, mid, bot, rio, jungle aliada/inimiga, base), ouro, XP, CS e diferenças contra o oponente direto, kills com local e quem estava perto, objetivos, recalls inferidos e limitações declaradas.
 - **Consultas encadeáveis** (filosofia Unix, TSV ou JSON Lines): `find`, `frames`, `events`, `at`, `series`, `where`.
 - **Relatório** gerado a partir de um "spec" com o julgamento da análise. Os números sempre vêm dos dados.
+- **Revisão de decisões** momento a momento (foi para a lane, atravessou o mapa, objetivo, recall, morte): estado na hora, sinais, resultado e veredito, com cortes e pesos **calibrados no seu histórico** (`lol calibrate`) e a **chance de vitória** antes → depois de um modelo treinado em partidas do seu elo (`lol winprob`).
+- **Visão antes dos objetivos** (`lol vision`), **padrão do jungle inimigo** por campeão (`lol junglers`) e **painel de evolução** com metas (`lol dashboard`).
 - **Página visual**: resumo em cards, gráfico de ouro, vereditos, replay com retratos dos campeões no minimapa, torres caindo no horário real, waves de minions (simulação, com checkbox), linha do tempo clicável, mapas das lutas e timing de objetivos.
 
 ## Requisitos
@@ -47,7 +49,18 @@ O jeito mais rápido é começar pelo esqueleto:
 ./lol new latest-flex --tema review     # baixa, resume e grava reports/<data>-<id>-review.json com TODOs
 ./lol swings <gameId>                   # onde o ouro virou
 ./lol fights <gameId>                   # as lutas
-./lol decisions <gameId>                # decisão por decisão: estado na hora, sinais e resultado
+./lol decisions <gameId>                # decisão por decisão: estado na hora, sinais, resultado e chance de vitória
+```
+
+Modelos e calibração (precisam de partidas em cache; o crawl usa a Riot API):
+
+```bash
+./lol calibrate all --write             # recalibra sinais, pesos dos objetivos e cortes boa/ruim
+./lol winprob crawl --max 1000          # baixa ranqueadas do mesmo elo (só features, sem nomes) para data/winprob/
+./lol winprob train                     # treina o modelo de chance de vitória
+./lol winprob curve <gameId>            # chance de vitória minuto a minuto
+./lol junglers --champ Shaco            # o que esse campeão costuma fazer nos primeiros minutos
+./lol dashboard --ranked                # reports/painel.html: evolução com metas
 ```
 
 Depois de trocar os `TODO` do spec pelo seu julgamento, rode `./lol render reports/<arquivo>.json`. O render recusa spec com `TODO`; use `--draft` só para pré-visualizar. Os passos abaixo mostram como montar o spec à mão.
@@ -58,6 +71,14 @@ Depois de trocar os `TODO` do spec pelo seu julgamento, rode `./lol render repor
 3. Abra o `.html` no navegador ou publique como Claude Artifact.
 
 Com o Claude Code, basta pedir em linguagem natural, por exemplo: *"analisa minha última flex, o jungle inimigo gankou o top 3 vezes?"*.
+
+## Testes e contribuição
+
+- `./lol selftest --fixture` roda tudo com 3 partidas sintéticas geradas por `tools/fixture.py`, sem dados pessoais nem cliente aberto. É o que o CI roda (`.github/workflows/selftest.yml`, Python 3.10 e 3.12) a cada push e PR.
+- `./lol selftest` sem opção testa com as suas partidas em cache.
+- Para explorar a fixture: `./lol fixture /tmp/fx` e depois `LOL_DATA_DIR=/tmp/fx ./lol players 9100000003`.
+- Mudou o roteiro de `tools/fixture.py`? Atualize os números conferidos em `test_fixture` no selftest.
+- `./lol watch` fica de olho no cliente: quando termina uma partida, baixa, resume e cria o esqueleto do relatório.
 
 ## Minimapa
 

@@ -20,7 +20,8 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / "data"
+# LOL_DATA_DIR troca a pasta de dados (ex.: partida sintética do `selftest --fixture`); padrão: <raiz>/data
+DATA = Path(os.environ["LOL_DATA_DIR"]).expanduser().resolve() if os.environ.get("LOL_DATA_DIR") else ROOT / "data"
 MATCHES = DATA / "matches"
 SUMMARIES = DATA / "summaries"
 REPORTS = ROOT / "reports"

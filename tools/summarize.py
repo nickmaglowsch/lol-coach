@@ -575,7 +575,8 @@ def get_summary(gid: int) -> dict:
         if not (s.get("summaryVersion") == SUMMARY_VERSION and (s["source"] != "lcu" or not src_v5)):
             s = None
     if s is None:
-        s = summarize_game(gid)
+        summarize_game(gid)
+        s = load_json(p)  # mesmo formato do disco (chaves str em perMinute[].players)
     _SUMMARY_CACHE[gid] = s
     return s
 
@@ -699,7 +700,7 @@ def main() -> None:
         tag = a.player.replace("#", "_").replace(" ", "_")
         save_json(SUMMARIES / f"player-{tag}.json", agg, indent=1)
         print_aggregate(agg)
-        print(f"\n(salvo em data/summaries/player-{tag}.json)")
+        print(f"\n(salvo em {SUMMARIES / f'player-{tag}.json'})")
         return
     ids = []
     for g in a.gameIds:
@@ -716,7 +717,7 @@ def main() -> None:
             print(SUMMARIES / f"{gid}.json")  # caminho no stdout, para encadear
         else:
             print_summary(s, a.focus)
-            print(f"(resumo salvo em data/summaries/{gid}.json)", file=sys.stderr)
+            print(f"(resumo salvo em {SUMMARIES / f'{gid}.json'})", file=sys.stderr)
 
 
 def latest_cached() -> int:
