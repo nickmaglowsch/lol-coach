@@ -21,7 +21,7 @@ import re
 import sys
 from pathlib import Path
 
-from common import ROOT, mmss, parse_time, resolve_player
+from common import ROOT, STATIC, mmss, parse_time, resolve_player
 from landmarks import LANDMARKS
 from positions import from_summary
 import report_parts as rp
@@ -395,7 +395,7 @@ def structures_data(c: Ctx) -> list[dict] | None:
     return out
 
 
-ICONS = ROOT / "data" / "static" / "champion-icons"
+ICONS = STATIC / "champion-icons"
 
 
 def icons_data(c: Ctx) -> dict:
@@ -451,6 +451,24 @@ def decisions_data(c: Ctx) -> list[dict] | None:
     return chosen
 
 
+EJ_CAP = ("Padrão: {games} partidas com o campeão no jungle, de {sample} partidas ranqueadas (as suas em cache e as de jogadores do mesmo elo baixadas pela API) "
+          "(winrate {winRate:.0%}). Posições só a cada minuto; lado top = metade do barão, bot = metade do dragão. "
+          "Serve para saber o que esperar, não para dizer o que esse jogador quis fazer.")
+
+
+def enemy_jungle(c: Ctx) -> dict | None:
+    """Jungler inimigo × padrão do campeão (winprob.py junglers). Ligado quando o foco é jungle; `"enemyJungle": false` desliga."""
+    want = c.spec.get("enemyJungle")
+    if want is False or (want is None and c.focus.get("role") != "JUNGLE"):
+        return None
+    try:
+        from winprob import enemy_jungle_compare
+        return enemy_jungle_compare(c.s, c.team)
+    except Exception as e:  # dado opcional: não derruba o relatório
+        print(f"[aviso] padrão do jungle inimigo indisponível: {e}", file=sys.stderr)
+        return None
+
+
 def decisions_html(c: Ctx, decs: list[dict]) -> str:
     E = rp.E
     cards = []
@@ -472,6 +490,9 @@ def decisions_html(c: Ctx, decs: list[dict]) -> str:
             res.append("seu time pegou " + ", ".join(sorted(set(r["objetivosNossos"]))))
         if r["objetivosDeles"]:
             res.append("inimigo pegou " + ", ".join(sorted(set(r["objetivosDeles"]))))
+        if r.get("chance"):
+            a, b = r["chance"]
+            res.append(f"chance de vitória (modelo) {a}% → {b}% ({b - a:+d} p.p.)".replace("-", "−"))
         chips = "".join(f'<span class="sig">{E(x)}</span>' for x in d["signals"]) or '<span class="sub">nenhum</span>'
         note = f'<p class="dec-note">{rp.mk(d["note"])}</p>' if d.get("note") else ""
         cards.append(f'''<article class="dec"><div class="dec-head"><time>{E(d["time"])}</time><span class="tag">{E(DEC_KIND[d["kind"]])}</span>
@@ -481,7 +502,9 @@ def decisions_html(c: Ctx, decs: list[dict]) -> str:
 <div><div class="eyebrow">Resultado ({E(d["window"])})</div><p>{E("; ".join(res))}</p></div></div>{note}</article>''')
     cap = ("O veredito vem do que aconteceu na janela (abates, objetivos e ouro do time), não do que você sabia na hora: "
            "decisão boa às vezes dá errado. Os sinais são o que dava para ver no momento. Posições a cada minuto; "
-           "horários dos objetivos estimados pelo seu histórico (`lol timers`).")
+           "horários dos objetivos estimados pelo seu histórico (`lol timers`). Cortes boa/ruim e peso de cada objetivo "
+           "calibrados no seu histórico (`lol calibrate`). A chance de vitória vem de um modelo simples (ouro, XP, abates, "
+           "torres e objetivos; `lol winprob`) e é aproximada.")
     return ('<section id="decisoes"><div class="eyebrow">Momento a momento</div><h2>Revisão de decisões</h2>'
             f'<div class="decs">{"".join(cards)}</div><p class="cap">{rp.mk(cap)}</p></section>')
 
@@ -638,6 +661,15 @@ def html_body(c: Ctx, data: dict) -> str:
         cap = sp.get("objectives", {}).get("caption", "Acima da linha, objetivos do seu time; abaixo, do inimigo.")
         out.append(f'''<section><div class="eyebrow">Objetivos</div><h2>Timing de objetivos</h2>
 <div class="fig"><div class="scroll"><svg id="objChart" viewBox="0 0 820 190" role="img" aria-label="Linha do tempo dos objetivos épicos"></svg></div><p class="cap">{mk(cap)}</p></div></section>''')
+    if sp.get("vision", True) is not False:
+        from vision import vision_around_objectives, vision_html
+        out.append(vision_html(vision_around_objectives(s, c.team)))
+    ej = enemy_jungle(c)
+    if ej:
+        body = "".join(f"<tr><td>{E(a)}</td><td>{E(b)}</td><td>{E(d)}</td></tr>" for a, b, d in ej["rows"])
+        out.append(f'''<section><div class="eyebrow">Jungle inimigo</div><h2>{E(ej["champion"])}: esta partida × o padrão do campeão</h2>
+<div class="fig"><div class="scroll"><table class="tbl"><thead><tr><th></th><th>nesta partida</th><th>no elo ({ej["games"]} partidas)</th></tr></thead>
+<tbody>{body}</tbody></table></div><p class="cap">{E(EJ_CAP.format(**ej))}</p></div></section>''')
     out += rp.sections(sp)
     out.append(rp.recs(sp, "Para a próxima"))
     lim = LIMITS_SHORT + (["Recalls e roles foram inferidos; dados do histórico do cliente, sem eventos de ward ou de compra."]
@@ -681,11 +713,20 @@ def md_report(c: Ctx) -> str:
                    + (f'{st["bolso"]} no bolso, ' if st.get("bolso") is not None else "")
                    + f'nível {st["nivel"]}' + (f'; lane {d["lane"]["nivel"]}' if d["lane"] else ""))
             res = f'{r["abatesNossos"]}×{r["abatesDeles"]}, ouro {r["ouroTime"]:+d}' + (f'; +{", ".join(r["objetivosNossos"])}' if r["objetivosNossos"] else "") \
-                + (f'; −{", ".join(r["objetivosDeles"])}' if r["objetivosDeles"] else "")
+                + (f'; −{", ".join(r["objetivosDeles"])}' if r["objetivosDeles"] else "") \
+                + (f'; chance {r["chance"][0]}%→{r["chance"][1]}%' if r.get("chance") else "")
             L.append(f'| {d["time"]} | {d["what"]} | {now} | {"; ".join(d["signals"]) or "—"} | {res} | {d["verdict"]} |')
             if d.get("note"):
                 L.append(f'| | ↳ {d["note"]} | | | | |')
         L.append("")
+    if sp.get("vision", True) is not False:
+        from vision import vision_around_objectives, vision_md
+        L += vision_md(vision_around_objectives(s, c.team))
+    ej = enemy_jungle(c)
+    if ej:
+        L += [f'## Jungle inimigo: {ej["champion"]} nesta partida × padrão do campeão', "",
+              f'| | nesta partida | no elo ({ej["games"]} partidas) |', "|---|---|---|"]
+        L += [f"| {a} | {b} | {d} |" for a, b, d in ej["rows"]] + ["", EJ_CAP.format(**ej), ""]
     L += rp.md_tail(sp, s["limitations"] + sp.get("limitations", []), "Limitações desta análise")
     return "\n".join(L)
 

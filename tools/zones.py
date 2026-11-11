@@ -92,7 +92,8 @@ def _validate() -> None:
     import os
     import sys
     sys.stdout.reconfigure(encoding="utf-8")
-    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "matches")
+    from common import MATCHES
+    root = str(MATCHES)
     lane_map = {"TOP_LANE": "top", "MID_LANE": "mid", "BOT_LANE": "bot"}
     tw_ok = tw_n = nx_ok = nx_n = sp_ok = sp_n = 0
     tw_bad = []

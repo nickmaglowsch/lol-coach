@@ -1,15 +1,22 @@
-"""Teste rápido de tudo o que dá para testar sem rede: `lol selftest`.
+"""Teste rápido de tudo o que dá para testar sem rede: `lol selftest [--fixture] [--keep]`.
 
 1. Compila todos os módulos e procura sintaxe que só funciona no Python 3.12+ (o projeto promete 3.10+).
 2. Zonas e referências do mapa em pontos conhecidos.
 3. Com partidas em cache: roda as consultas do `lol` e renderiza um relatório de uma partida e um de
    várias partidas numa pasta temporária, conferindo seções, dados embutidos e (se houver Node) o JavaScript.
 Sai com código 1 se algo falhar. Não baixa nada e não toca em reports/.
+
+--fixture: em vez do cache real, gera partidas sintéticas (tools/fixture.py) numa pasta temporária, aponta
+LOL_DATA_DIR para ela (este processo e os subprocessos) e roda as mesmas verificações, mais checagens dos
+números que o roteiro garante e o mapa vetorial (sem minimapa nem retratos). É o modo do CI (sem dados pessoais).
+--keep: não apaga a pasta temporária da fixture (para depurar).
 """
 from __future__ import annotations
 
+import argparse
 import io
 import json
+import os
 import py_compile
 import re
 import shutil
@@ -101,7 +108,10 @@ def test_map() -> None:
 # ----------------------------------------------------------------------------- 3. dados
 def run_lol(*args: str) -> subprocess.CompletedProcess:
     script = {"games": "query.py", "lanes": "query.py", "paths": "query.py", "players": "query.py", "frames": "query.py",
-              "events": "query.py", "at": "query.py", "series": "query.py", "find": "query.py"}.get(args[0], "query.py")
+              "events": "query.py", "at": "query.py", "series": "query.py", "find": "query.py", "vision": "vision.py",
+              "calibrate": "calibrate.py", "winprob": "winprob.py", "dashboard": "dashboard.py"}.get(args[0], "query.py")
+    if script != "query.py":  # os outros scripts não recebem o nome do comando (como no lançador `lol`)
+        args = args[1:]
     return subprocess.run([sys.executable, str(TOOLS / script), *args], capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=120)
 
@@ -132,10 +142,15 @@ def check_html(path: Path, ids: list[str], label: str) -> None:
         print("  (pulado) node não encontrado: JavaScript não verificado")
 
 
-def test_data() -> None:
-    print("3. Consultas e relatórios (com o cache)")
+def test_data(fixture: dict | None = None) -> None:
+    print("3. Consultas e relatórios (" + ("com a partida sintética" if fixture else "com o cache") + ")")
     sys.path.insert(0, str(TOOLS))
     from summarize import cached_ids, get_summary
+    if fixture:
+        # como no pipeline (`lol fetch` -> `lol summarize`): resumos gerados e gravados antes das consultas
+        r = subprocess.run([sys.executable, str(TOOLS / "summarize.py"), "--all"], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=300)
+        check(r.returncode == 0, "lol summarize --all" + (f" ({r.stderr.strip().splitlines()[-1]})" if r.returncode else ""))
     ids = [g for g in sorted(cached_ids(), reverse=True)]
     games = [get_summary(g) for g in ids]
     sr = [s for s in games if s["mapId"] == 11 and (s["duration"] or 0) > 600]
@@ -150,8 +165,32 @@ def test_data() -> None:
         r = run_lol(*args)
         check(r.returncode == 0 and r.stdout.strip() != "", f"lol {' '.join(args[:1] + ['…'] if len(args) > 1 else args)}"
               + (f" ({r.stderr.strip().splitlines()[-1]})" if r.returncode else ""))
+    # ferramentas de várias partidas: visão, calibração, chance de vitória (só se houver modelo treinado)
+    from common import DATA
+    extra = [["vision", "--all"], ["calibrate", "signals"], ["calibrate", "games"], ["calibrate", "score"]]
+    if s["source"] != "lcu":
+        extra.append(["vision", gid])
+    if (DATA / "winprob" / "model.json").exists():
+        extra += [["winprob", "curve", gid], ["winprob", "state", gid, "10:00"]]
+    else:
+        print("  (pulado) sem modelo de chance de vitória (data/winprob/model.json): `lol winprob` não testado")
+    for args in extra:
+        r = run_lol(*args)
+        check(r.returncode == 0 and r.stdout.strip() != "", f"lol {' '.join(args[:2])}"
+              + (f" ({(r.stderr.strip().splitlines() or ['sem saída'])[-1]})" if r.returncode or not r.stdout.strip() else ""))
+    from decisions import infer_timers, review
+    from winprob import prob_fn
+    me = next((p for p in s["participants"] if p.get("role") == "JUNGLE"), s["participants"][0])
+    decs = review(s, me, infer_timers(games))
+    has_model = prob_fn(s, me["team"]) is not None
+    check(bool(decs) and all((d["result"]["chance"] is not None) == has_model for d in decs),
+          "revisão de decisões: chance de vitória " + ("presente (há modelo)" if has_model else "ausente sem modelo, sem erro"))
 
+    import render as render_mod
     from render import render
+    if fixture:  # igual ao CI: sem o minimapa (arquivo local fora do git) nem retratos baixados
+        render_mod.MINIMAP = Path(fixture["dataDir"]) / "sem-minimapa.png"
+        render_mod.ICONS = Path(fixture["dataDir"]) / "static" / "champion-icons"
     tmp = Path(tempfile.mkdtemp(prefix="lolcoach-selftest-"))
     kill = next((k for k in s["events"]["kills"] if k["ts"] > 120000), None)
     top = next((p for p in s["participants"] if p.get("role") == "TOP"), None)
@@ -187,9 +226,18 @@ def test_data() -> None:
         ids_expected += ["laneChart"] if top else []
         ids_expected += ["mapFight0"] if kill else []
         check_html(p.with_suffix(".html"), ids_expected, "uma partida")
+        if s["source"] != "lcu":
+            check("Visão antes dos objetivos" in p.with_suffix(".html").read_text(encoding="utf-8"),
+                  "uma partida: seção de visão antes dos objetivos")
         md = p.with_suffix(".md").read_text(encoding="utf-8")
         check(all(h in md for h in ("## Resumo em 5 linhas", "## Linha do tempo", "## Recomendações", "## Limitações")),
               "uma partida: Markdown com as seções obrigatórias")
+        if fixture:
+            page = p.with_suffix(".html").read_text(encoding="utf-8")
+            data = json.loads(re.search(r'id="report-data">(.*?)</script>', page, re.S).group(1).replace("<\\/", "</"))
+            check(data.get("mapImg") is None and data.get("replay") and data.get("structures"),
+                  "uma partida: sem minimapa, replay e estruturas no mapa vetorial")
+            check(len(data.get("fights") or []) == 1 and data.get("decisions"), "uma partida: luta e decisões nos dados")
 
     # esqueleto do `lol new`: render recusa TODO; com --draft gera
     r = subprocess.run([sys.executable, str(TOOLS / "scaffold.py"), "spec", gid], capture_output=True, text=True,
@@ -230,16 +278,105 @@ def test_data() -> None:
     if ok:
         check_html(p2.with_suffix(".html"), ["multiGold", "deathBars"], "várias partidas")
         check('class="tbl cmp"' in p2.with_suffix(".html").read_text(encoding="utf-8"), "várias partidas: tabela de comparação")
+
+    # painel de evolução
+    from types import SimpleNamespace
+    import dashboard
+    dp = tmp / "painel.html"
+    try:
+        dashboard.build(SimpleNamespace(ranked=False, queue=None, role=None, since=None, until=None, recent=None, window=None,
+                                        alias="teste", out=str(dp)))
+        ok = dp.exists()
+    except SystemExit as e:
+        ok = False
+        print("     ", e)
+    check(ok, "lol dashboard gera o painel")
+    if ok:
+        page = dp.read_text(encoding="utf-8")
+        m = re.search(r'id="dash-data"[^>]*>(.*?)</script>', page, re.S)
+        try:
+            json.loads(m.group(1).replace("<\\/", "</"))
+            ok = True
+        except Exception:
+            ok = False
+        check(ok, "painel: dados embutidos são JSON válido")
+        node = shutil.which("node")
+        if node:
+            code = page.rsplit("<script>", 1)[1].split("</script>", 1)[0]
+            js = Path(tempfile.gettempdir()) / "lolcoach_selftest_dash.js"
+            js.write_text(code, encoding="utf-8")
+            r = subprocess.run([node, "--check", str(js)], capture_output=True, text=True)
+            check(r.returncode == 0, "painel: JavaScript sem erro de sintaxe (node --check)")
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+# ----------------------------------------------------------------------------- 4. fixture
+def test_fixture(fx: dict) -> None:
+    """Números que o roteiro da fixture garante (tools/fixture.py): se mudarem, algo no resumo mudou."""
+    print("4. Partida sintética: números do roteiro")
+    from common import DATA, SUMMARIES, resolve_player
+    from summarize import get_summary
+    check(DATA == Path(fx["dataDir"]).resolve() and (SUMMARIES / f'{fx["main"]}.json').exists(),
+          "LOL_DATA_DIR: resumos gravados na pasta da fixture")
+    check(not (TOOLS.parent / "data" / "summaries" / f'{fx["main"]}.json').exists(), "nada gravado no data/ real")
+    s = get_summary(fx["main"])
+    ev, P = s["events"], s["participants"]
+    me = resolve_player(P, "me")
+    check(me is not None and me["riotId"] == fx["me"] and me["role"] == "JUNGLE" and me["stats"]["win"],
+          "me.json resolve o jogador em foco (jungle, vitória)")
+    check(resolve_player(P, "chogath") is not None and resolve_player(P, "Kha'Zix") is not None,
+          "campeões com apóstrofo (Cho'Gath, Kha'Zix) pelo nome normalizado")
+    check(s["source"] == "riot-match-v5" and all(p["roleSource"] == "match-v5 teamPosition" for p in P),
+          "fonte Match-V5 e roles do teamPosition")
+    check(len(s["perMinute"]) == 30 and s["perMinute"][10]["players"][str(me["pid"])].get("hpPct") is not None,
+          "30 frames, com vida/mana (championStats)")
+    kinds: dict[str, int] = {}
+    for o in ev["objectives"]:
+        kinds[o["type"]] = kinds.get(o["type"], 0) + 1
+    want = {"DRAGON": 4, "HORDE": 3, "RIFTHERALD": 1, "BARON_NASHOR": 1, "TOWER": 9, "INHIBITOR": 1, "TURRET_PLATE": 5}
+    check(len(ev["kills"]) == 15 and kinds == want, f"15 abates e os objetivos do roteiro (achou {len(ev['kills'])} e {kinds})")
+    check(bool(ev["wards"]["events"]) and any(b["type"] == "ITEM_UNDO" for b in ev["purchases"])
+          and not any(b["estimated"] for b in ev["purchases"]), "wards e compras por evento (com ITEM_UNDO)")
+    check(any(r["pid"] == me["pid"] and r["kind"].startswith("recall") for r in ev["recalls"])
+          and any(r["kind"] == "volta à base após morte" for r in ev["recalls"]), "recalls inferidos pelas compras")
+    fb = ev["kills"][0]
+    check(fb["minute"] == 3 and fb["killer"] == me["pid"] and fb["zoneForVictim"] == "top",
+          "primeiro abate: gank do jungle no top no minuto 3")
+    r = run_lol("fights", str(fx["main"]), "--no-header")
+    check(r.returncode == 0 and len(r.stdout.strip().splitlines()) == 3, "lol fights acha as 3 lutas do roteiro")
+    r = run_lol("games", "--no-header")
+    res = sorted(ln.split("\t")[5] for ln in r.stdout.strip().splitlines()) if r.returncode == 0 else []
+    check(res == ["False", "True", "True"], "lol games: 3 partidas (2 vitórias e a derrota espelhada)")
+    r = run_lol("find", "--enemy", "khazix", "--loss", "--no-header")
+    check(r.returncode == 0 and r.stdout.split("\t")[0].strip() == "9100000002", "lol find --enemy --loss acha a partida espelhada")
+    r = run_lol("at", str(fx["main"]), "03:20", "--ref", "1700,12700", "--json")
+    rows = [json.loads(ln) for ln in r.stdout.strip().splitlines()] if r.returncode == 0 else []
+    check(len(rows) == 10, "lol at devolve os 10 jogadores")
+
+
 def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--fixture", action="store_true", help="usa partidas sintéticas numa pasta temporária (modo do CI)")
+    ap.add_argument("--keep", action="store_true", help="com --fixture: não apaga a pasta temporária")
+    a = ap.parse_args()
+    fx, fx_dir = None, None
+    if a.fixture:
+        sys.path.insert(0, str(TOOLS))
+        import fixture
+        fx_dir = Path(tempfile.mkdtemp(prefix="lolcoach-fixture-"))
+        fx = fixture.generate(fx_dir / "data")
+        os.environ["LOL_DATA_DIR"] = fx["dataDir"]   # antes de importar common: vale aqui e nos subprocessos
+        print(f"(fixture: {len(fx['games'])} partidas sintéticas em {fx['dataDir']})")
     test_code()
     test_map()
     try:
-        test_data()
+        test_data(fx)
+        if fx:
+            test_fixture(fx)
     except Exception as e:  # um erro inesperado também é falha do teste
         check(False, f"erro inesperado: {e.__class__.__name__}: {e}")
+    if fx_dir and not a.keep:
+        shutil.rmtree(fx_dir, ignore_errors=True)
     bad = [w for ok, w in results if not ok]
     print(f"\n{len(results) - len(bad)}/{len(results)} verificações ok" + (f"; falharam: {len(bad)}" if bad else ""))
     sys.exit(1 if bad else 0)

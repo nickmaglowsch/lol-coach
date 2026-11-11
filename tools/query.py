@@ -431,7 +431,9 @@ def cmd_decisions(a, out: Out) -> None:
                  "vivos": d["alive"], "sinais": d["signals"], "janela": d["window"],
                  "abates": f'{r["abatesNossos"]}x{r["abatesDeles"]} (você em {r["comVoce"]})',
                  "objetivos": "+" + ",".join(r["objetivosNossos"]) + " -" + ",".join(r["objetivosDeles"]),
-                 "ouroTime": r["ouroTime"], "veredito": d["verdict"]})
+                 "ouroTime": r["ouroTime"],
+                 "chance": f'{r["chance"][0]}%→{r["chance"][1]}%' if r.get("chance") else "",
+                 "veredito": d["verdict"], "sinaisFracos": d.get("weakSignals", [])})
 
 
 def main() -> None:

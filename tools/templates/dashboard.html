@@ -1,0 +1,330 @@
+<meta charset="utf-8">
+<title><!--TITLE--></title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Gerado por tools/dashboard.py a partir do cache (data/summaries) e de reports/*.json. Não editar à mão.
+   Mesmos tokens, fontes e temas dos relatórios (tools/templates/report.html).
+   Cores: --ally = vitória / seu time, --enemy = derrota / inimigo, --gold = metas e campeão-meta. */
+:root {
+  --bg: #F2F4F7; --surface: #FFFFFF; --ink: #121923; --muted: #586274; --line: #D8DDE5;
+  --ally: #2560C6; --enemy: #C23A33; --gold: #9C6A0E;
+  --ok: #17845A; --bad: #B0265C; --unk: #677080; --dead: #A9AEB6; --on-dot: #FFFFFF;
+  --c1: #7A4FC0; --c2: #1F8A8A; --c3: #C2661F;
+  --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0D1218; --surface: #151C26; --ink: #E5EAF1; --muted: #9AA4B4; --line: #283241;
+  --ally: #5E95F2; --enemy: #EE6A61; --gold: #E1AE4C;
+  --ok: #3DBE85; --bad: #EE6E9C; --unk: #9AA3B1; --dead: #4A525E; --on-dot: #0D1218;
+  --c1: #A88AF0; --c2: #4FC2C2; --c3: #EE9A55; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0D1218; --surface: #151C26; --ink: #E5EAF1; --muted: #9AA4B4; --line: #283241;
+  --ally: #5E95F2; --enemy: #EE6A61; --gold: #E1AE4C;
+  --ok: #3DBE85; --bad: #EE6E9C; --unk: #9AA3B1; --dead: #4A525E; --on-dot: #0D1218;
+  --c1: #A88AF0; --c2: #4FC2C2; --c3: #EE9A55; color-scheme: dark }
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--body); overflow-x: hidden; }
+.wrap { max-width: 880px; margin: 0 auto; padding-block: 28px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 40px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.05; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(34px, 7vw, 54px); letter-spacing: .01em; }
+h2 { font-size: 28px; letter-spacing: .01em; }
+h3 { font-size: 20px; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+a { color: var(--ally); text-underline-offset: 2px; }
+a:focus-visible, input[type=range]:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+code { font-family: var(--mono); font-size: .88em; background: color-mix(in srgb, var(--muted) 12%, transparent); padding: 1px 5px; border-radius: 4px; white-space: nowrap; }
+.eyebrow { font: 600 12px/1 var(--body); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.ally { color: var(--ally); } .enemy { color: var(--enemy); } .good { color: var(--ok); }
+.small { font-size: 12.5px; color: var(--muted); font-weight: 400; }
+section { display: grid; gap: 16px; min-width: 0; }
+.sub { color: var(--muted); }
+header { display: grid; gap: 14px; }
+.score { display: flex; flex-wrap: wrap; gap: 10px 28px; align-items: baseline; font-family: var(--display); }
+.score b { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.score span { font: 500 13px var(--body); color: var(--muted); display: block; }
+.fig { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 12px; min-width: 0; }
+.fig > * { min-width: 0; }
+.fig h3 { font-size: 18px; }
+.scroll { overflow-x: auto; }
+.cap { font-size: 13px; color: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); }
+.legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+.legend i.dot { width: 9px; height: 9px; border-radius: 50%; }
+.legend i.sq { width: 10px; height: 10px; border-radius: 2px; }
+.legend i.dash { background: repeating-linear-gradient(90deg, var(--gold) 0 4px, transparent 4px 7px); }
+.chip { font: 700 12px/1 var(--body); letter-spacing: .08em; text-transform: uppercase; padding: 6px 9px; border-radius: 999px; border: 1.5px solid currentColor; white-space: nowrap; display: inline-block; }
+.chip.ok { color: var(--ok); } .chip.bad { color: var(--bad); } .chip.unk { color: var(--unk); font-size: 10.5px; padding: 4px 7px; }
+
+/* metas */
+.metas { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); gap: 12px; }
+.meta { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.meta-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; justify-content: space-between; }
+.meta-head h3 { flex: 1 1 160px; font-size: 19px; }
+.meta-val { display: grid; gap: 2px; }
+.meta-val b { font: 600 34px/1 var(--display); font-variant-numeric: tabular-nums; }
+.meta-val b small { font-size: 20px; color: var(--muted); }
+.meta-val span { font-size: 13px; color: var(--muted); }
+.meta ul { margin: 0; padding-left: 18px; display: grid; gap: 3px; font-size: 13.5px; }
+.meta .src { font-size: 12.5px; color: var(--muted); }
+.meta .src a { color: var(--muted); }
+
+/* série */
+.readout { background: var(--surface); border-bottom: 1px solid var(--line);
+  margin: -16px -16px 0; padding: 12px 16px; border-radius: 12px 12px 0 0; display: grid; gap: 6px; }
+.pick { display: flex; gap: 10px; align-items: center; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; font-weight: 600; }
+.pick input { flex: 1; min-width: 0; accent-color: var(--gold); margin: 0; }
+.rt { font-size: 13.5px; min-height: 2.9em; font-variant-numeric: tabular-nums; }
+.rt b { font-weight: 600; }
+.rt .mono { margin-left: 4px; }
+.chart { display: grid; gap: 4px; }
+.chart h3 { font: 600 14px/1.2 var(--body); color: var(--ink); }
+.chart svg { width: 100%; height: auto; display: block; overflow: visible; touch-action: pan-y; cursor: crosshair; }
+#charts { display: grid; gap: 18px; }
+.ax { stroke: var(--line); stroke-width: 1; }
+.ax0 { stroke: var(--muted); stroke-width: 1; }
+.tick { fill: var(--muted); font: 10.5px var(--mono); }
+.glbl { fill: var(--gold); font: 600 11px var(--body); paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round; }
+.mlbl { fill: var(--muted); font: 11px var(--body); paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round; }
+
+/* tabelas e listas */
+.tbl { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.tbl th { text-align: left; font: 600 11px var(--body); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.tbl td { padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.tbl td.n { text-align: right; }
+.tbl.cmp { min-width: 520px; } .tbl.cmp td:first-child { color: var(--muted); white-space: normal; }
+.tbl.cmp th .small { text-transform: none; letter-spacing: 0; }
+.tbl tr.nr td:first-child { box-shadow: inset 3px 0 0 var(--gold); }
+.mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.reps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.reps li { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 12px; align-items: baseline;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; }
+.reps li div { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.reps li a { font-weight: 600; }
+.limits { font-size: 13px; color: var(--muted); display: grid; gap: 4px; padding-left: 18px; margin: 0; }
+footer { font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; }
+@media (min-width: 640px) { .readout { position: sticky; top: 0; z-index: 2; } }
+@media (max-width: 520px) {
+  .reps li { grid-template-columns: 1fr; gap: 4px; }
+  .meta-val b { font-size: 30px; }
+}
+</style>
+
+<div class="wrap">
+<!--BODY-->
+</div>
+
+<script type="application/json" id="dash-data">/*DATA*/</script>
+<script>
+(function () {
+  const D = JSON.parse(document.getElementById("dash-data").textContent);
+  const G = D.games, n = G.length, NS = "http://www.w3.org/2000/svg";
+  const $ = id => document.getElementById(id);
+  const el = (tag, attrs, parent, text) => {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (text != null) e.textContent = text;
+    if (parent) parent.appendChild(e);
+    return e;
+  };
+  const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+  const fmt = (v, dec, signed, unit) => {
+    if (v == null || Number.isNaN(v)) return "—";
+    const s = Math.abs(v).toLocaleString("pt-BR", { minimumFractionDigits: dec || 0, maximumFractionDigits: dec || 0 });
+    const zero = Number(Math.abs(v).toFixed(dec || 0)) === 0;
+    return (v < 0 && !zero ? "−" : signed && v > 0 && !zero ? "+" : "") + s + (unit || "");
+  };
+  const tickFmt = (v, big, unit) => {
+    if (Math.abs(v) < 1e-9) return "0" + (big ? "" : (unit || ""));
+    if (big) return (v < 0 ? "−" : "") + (Math.abs(v) / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + "k";
+    return (v < 0 ? "−" : "") + Math.abs(v).toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + (unit || "");
+  };
+  const dateOf = g => new Date(g.date);
+  const L = 46, R = 14;
+  const xScale = W => i => L + (n <= 1 ? (W - L - R) / 2 : i * (W - L - R) / (n - 1));
+  const idxAt = (W, px) => n <= 1 ? 0 : Math.max(0, Math.min(n - 1, Math.round((px - L) / (W - L - R) * (n - 1))));
+  const movAvg = (vals, w) => vals.map((_, i) => {
+    if (i < w - 1) return null;
+    const win = vals.slice(i - w + 1, i + 1).filter(v => v != null);
+    return win.length >= Math.ceil(w / 2) ? win.reduce((a, b) => a + b, 0) / win.length : null;
+  });
+  const niceStep = range => {
+    const raw = Math.max(range, 1e-9) / 4, p = Math.pow(10, Math.floor(Math.log10(raw)));
+    for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= raw) return m * p;
+    return 10 * p;
+  };
+  const pathOf = (pts) => {
+    let d = "", pen = false;
+    pts.forEach(p => { if (p == null) { pen = false; return; } d += (pen ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1) + " "; pen = true; });
+    return d;
+  };
+
+  let active = n - 1;
+  const cursors = [];
+
+  function dateTicks(svg, W, yPos) {
+    const x = xScale(W); let lastX = -1e9, prevKey = "";
+    G.forEach((g, i) => {
+      const d = dateOf(g), key = d.getFullYear() + "-" + d.getMonth();
+      if (key === prevKey) return;
+      prevKey = key;
+      if (x(i) - lastX < 52) return;
+      lastX = x(i);
+      el("line", { x1: x(i), x2: x(i), y1: yPos - 4, y2: yPos, class: "ax0" }, svg);
+      el("text", { x: x(i), y: yPos + 12, "text-anchor": i === 0 ? "start" : "middle", class: "tick" }, svg,
+         MESES[d.getMonth()] + "/" + String(d.getFullYear()).slice(2));
+    });
+  }
+
+  function hover(svg, W) {
+    const pick = e => {
+      const r = svg.getBoundingClientRect(); if (!r.width) return;
+      setActive(idxAt(W, (e.clientX - r.left) * W / r.width));
+    };
+    svg.addEventListener("pointermove", pick);
+    svg.addEventListener("pointerdown", pick);
+  }
+
+  function addCursor(svg, x, T, B, yOf) {
+    const ln = el("line", { y1: T, y2: B, stroke: "var(--gold)", "stroke-width": 1.2, opacity: .8 }, svg);
+    const dot = yOf ? el("circle", { r: 5, fill: "none", stroke: "var(--ink)", "stroke-width": 1.6 }, svg) : null;
+    cursors.push(i => {
+      ln.setAttribute("x1", x(i)); ln.setAttribute("x2", x(i));
+      if (dot) { const y = yOf(i); if (y == null) dot.setAttribute("opacity", 0); else { dot.setAttribute("opacity", 1); dot.setAttribute("cx", x(i)); dot.setAttribute("cy", y); } }
+    });
+  }
+
+  // ---------------- faixa de campeões
+  function drawChamps(W) {
+    const svg = $("champStrip"); svg.textContent = "";
+    const H = 34, T = 4, B = 22, x = xScale(W);
+    svg.setAttribute("viewBox", `0 0 ${W} ${H + 14}`);
+    const cnt = {}; G.forEach(g => { cnt[g.champ] = (cnt[g.champ] || 0) + 1; });
+    const others = Object.keys(cnt).filter(c => c !== D.metaChamp).sort((a, b) => cnt[b] - cnt[a]);
+    const col = {}; if (D.metaChamp) col[D.metaChamp] = "var(--gold)";
+    others.slice(0, 3).forEach((c, i) => { col[c] = `var(--c${i + 1})`; });
+    const colOf = c => col[c] || "var(--dead)";
+    const step = n > 1 ? (W - L - R) / (n - 1) : 20, bw = Math.max(1.5, Math.min(14, step * .82));
+    G.forEach((g, i) => {
+      const r = el("rect", { x: x(i) - bw / 2, y: T, width: bw, height: B - T, rx: Math.min(2, bw / 3), fill: colOf(g.champ), opacity: g.win ? 1 : .55 }, svg);
+      el("title", {}, r, g.champ + (g.win ? " · vitória" : " · derrota"));
+    });
+    dateTicks(svg, W, B + 4);
+    addCursor(svg, x, 0, B + 2, null);
+    hover(svg, W);
+    const key = $("champKey"); key.textContent = "";
+    const shown = (D.metaChamp && cnt[D.metaChamp] ? [D.metaChamp] : []).concat(others.slice(0, 3));
+    shown.forEach(c => {
+      const s = document.createElement("span");
+      s.innerHTML = `<i class="sq" style="background:${colOf(c)}"></i>`;
+      s.appendChild(document.createTextNode(`${c} (${cnt[c]})${c === D.metaChamp ? " · meta" : ""}`));
+      key.appendChild(s);
+    });
+    const rest = others.slice(3).reduce((a, c) => a + cnt[c], 0);
+    if (rest) { const s = document.createElement("span"); s.innerHTML = `<i class="sq" style="background:var(--dead)"></i>`; s.appendChild(document.createTextNode(`outros (${rest})`)); key.appendChild(s); }
+    const s = document.createElement("span"); s.textContent = "cor clara = derrota"; key.appendChild(s);
+  }
+
+  // ---------------- um gráfico da série
+  function drawChart(cfg, holder, W) {
+    holder.textContent = "";
+    const h3 = document.createElement("h3"); h3.textContent = cfg.title; holder.appendChild(h3);
+    const isWin = cfg.kind === "win";
+    const H = isWin ? 130 : 160, T = 12, B = H - 24;
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": cfg.title + ", partida por partida, com média móvel" }, holder);
+    const x = xScale(W);
+    const vals = G.map(g => isWin ? (g.win ? 100 : 0) : g[cfg.key]);
+    const have = vals.filter(v => v != null);
+    let lo, hi, step;
+    if (isWin) { lo = 0; hi = 100; step = 50; }
+    else {
+      lo = Math.min(...have, cfg.goal != null ? cfg.goal : Infinity, 0);
+      hi = Math.max(...have, cfg.goal != null ? cfg.goal : -Infinity);
+      if (hi === lo) hi = lo + 1;
+      step = niceStep(hi - lo);
+      if (cfg.key === "deaths" || cfg.key === "bad" || cfg.key === "dragDiff20") step = Math.max(1, Math.round(step));
+      lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
+    }
+    const y = v => T + (hi - v) / (hi - lo) * (B - T);
+    const big = Math.max(Math.abs(lo), Math.abs(hi)) >= 1000;
+    for (let v = lo; v <= hi + 1e-9; v += step) {
+      el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: Math.abs(v) < 1e-9 && lo < 0 ? "ax0" : "ax" }, svg);
+      el("text", { x: L - 7, y: y(v) + 4, "text-anchor": "end", class: "tick" }, svg, tickFmt(v, big, isWin ? "%" : cfg.unit));
+    }
+    el("line", { x1: L, x2: W - R, y1: B, y2: B, class: "ax0" }, svg);
+    dateTicks(svg, W, B + 4);
+    // meta / média geral
+    if (isWin) {
+      const wr = 100 * G.filter(g => g.win).length / n;
+      el("line", { x1: L, x2: W - R, y1: y(wr), y2: y(wr), stroke: "var(--muted)", "stroke-dasharray": "4 3", "stroke-width": 1 }, svg);
+      el("text", { x: L + 6, y: y(wr) - 5, "text-anchor": "start", class: "mlbl" }, svg, "geral " + fmt(wr, 0) + "%");
+    } else if (cfg.goal != null) {
+      const opTxt = { ">=": "≥", ">": ">", "<=": "≤", "<": "<" }[cfg.op] || "";
+      el("line", { x1: L, x2: W - R, y1: y(cfg.goal), y2: y(cfg.goal), stroke: "var(--gold)", "stroke-dasharray": "5 4", "stroke-width": 1.6 }, svg);
+      el("text", { x: L + 6, y: y(cfg.goal) - 5, "text-anchor": "start", class: "glbl" }, svg, "meta " + opTxt + " " + fmt(cfg.goal, 0, false, cfg.unit));
+    }
+    // pontos
+    const step_ = n > 1 ? (W - L - R) / (n - 1) : 20, r = Math.max(1.6, Math.min(3.6, step_ / 2.6));
+    G.forEach((g, i) => {
+      if (vals[i] == null) return;
+      const c = el("circle", { cx: x(i), cy: y(vals[i]), r, fill: g.win ? "var(--ally)" : "var(--enemy)", opacity: isWin ? .55 : .62 }, svg);
+      el("title", {}, c, `${g.champ} · ${g.win ? "vitória" : "derrota"} · ${isWin ? "" : fmt(vals[i], cfg.key === "enemyJg" ? 1 : 0, cfg.signed, cfg.unit)}`);
+    });
+    // média móvel
+    const ma = movAvg(vals, D.window);
+    el("path", { d: pathOf(ma.map((v, i) => v == null ? null : [x(i), y(v)])), fill: "none", stroke: "var(--ink)", "stroke-width": 2.2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+    const lastMa = ma.length ? ma[ma.length - 1] : null;
+    if (lastMa != null) el("text", { x: x(n - 1) + 4, y: y(lastMa) - 7, "text-anchor": "end", class: "mlbl" }, svg,
+                           fmt(lastMa, isWin ? 0 : 1, cfg.signed, isWin ? "%" : cfg.unit));
+    addCursor(svg, x, T, B, i => vals[i] == null ? null : y(vals[i]));
+    hover(svg, W);
+  }
+
+  function readout(i) {
+    const g = G[i], d = dateOf(g);
+    const when = d.toLocaleDateString("pt-BR") + " " + d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    const res = g.win ? '<b class="ally">Vitória</b>' : '<b class="enemy">Derrota</b>';
+    const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    $("readoutText").innerHTML =
+      `<div>${res} · <b>${esc(g.champ)}</b> (${esc(g.role)}) · ${esc(g.queue)} · ${when} · ${g.min} min · KDA ${esc(g.kda)} <span class="mono">#${i + 1} de ${n} · ${g.id}</span></div>` +
+      `<div>mortes <b>${g.deaths}</b> · dragões até 20:00 <b>${g.dragA20}–${g.dragE20}</b> · jungle inimiga <b>${fmt(g.enemyJg, 1, false, "%")}</b> · ` +
+      `ouro @15 vs oponente <b>${fmt(g.gd15, 0, true)}</b> · decisões “ruim” <b>${g.bad}</b> de ${g.dec}</div>`;
+  }
+
+  function setActive(i) {
+    active = i;
+    $("pick").value = i;
+    cursors.forEach(f => f(i));
+    readout(i);
+  }
+
+  function drawAll() {
+    const holder = $("charts"); if (!holder || !n) return;
+    const W = Math.max(280, Math.round(holder.clientWidth || 800));
+    cursors.length = 0;
+    drawChamps(W);
+    holder.textContent = "";
+    D.charts.forEach(cfg => { const div = document.createElement("div"); div.className = "chart"; holder.appendChild(div); drawChart(cfg, div, W); });
+    setActive(active);
+  }
+
+  $("pick").addEventListener("input", e => setActive(+e.target.value));
+  let lastW = 0, raf = 0;
+  const onResize = () => {
+    const w = Math.round($("charts").clientWidth);
+    if (w === lastW) return;
+    lastW = w; cancelAnimationFrame(raf); raf = requestAnimationFrame(drawAll);
+  };
+  if (window.ResizeObserver) new ResizeObserver(onResize).observe($("charts")); else window.addEventListener("resize", onResize);
+  drawAll();
+})();
+</script>

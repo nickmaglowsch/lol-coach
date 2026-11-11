@@ -12,7 +12,7 @@ Toda análise parte dos dados brutos em `data/matches/` e dos resumos em `data/s
 
 ### Ambiente
 - Use o lançador **`./lol <comando>`** (Bash) ou **`.\lol <comando>`** (PowerShell/cmd, via `lol.cmd`). Ele acha o Python 3.14 do **mise** sozinho (`LOL_PYTHON` sobrescreve).
-- Scripts usam só a biblioteca padrão. Rode a partir da raiz do projeto.
+- Scripts usam só a biblioteca padrão. Rode a partir da raiz do projeto. `LOL_DATA_DIR` troca a pasta de dados (padrão `data/`); `reports/` não muda.
 - Não escreva scripts Python avulsos para consultar uma partida: use `lol frames/events/at/series/find`. Se faltar uma consulta, **adicione um subcomando em `tools/query.py`** em vez de improvisar.
 
 ## Ferramentas
@@ -44,10 +44,17 @@ Filosofia Unix: cada comando faz uma coisa; dados no **stdout** (TSV com cabeça
 | `lol fights <id> [--gap 20] [--min 3]` | Lutas = abates em sequência (≤ gap s entre um e outro): horário, placar, local, objetivos em volta. |
 | `lol timers` | Horários dos objetivos inferidos do histórico: primeiro abate mais cedo (nasce até) e menor intervalo entre abates (renasce em), inclusive ancião depois da alma. |
 | `lol decisions <id> [-p P] [--kind lane,travessia,objetivo,ausente,recall,morte] [--json]` | Revisão de decisões: cada vez que o jogador foi para uma lane, atravessou o mapa, fez/perdeu objetivo, deu recall ou morreu, com o estado na hora (vida, mana, ouro no bolso, nível, lane de destino, jungle inimigo, objetivos vivos/nascendo), os sinais, o resultado na janela seguinte e um veredito boa/ruim/neutra **pelo resultado**. |
+| `lol vision <id> \| --all` | Visão antes de cada objetivo épico (wards colocadas/destruídas por time nos 90 s antes; só Match-V5) e, com `--all`, a taxa de objetivos pegos com mais × menos visão. Entra sozinho no relatório (`"vision": false` desliga). |
+| `lol calibrate <signals\|games\|epics\|score\|thresholds\|all [--write]>` | Calibra a revisão de decisões com o histórico em cache: sinais com × sem (placar da janela com IC95), quanto vale cada objetivo épico em ouro (pela chance de vitória), cortes boa/ruim. `all --write` grava `data/calibration.json`, que `decisions.py` lê (sem o arquivo valem as constantes calibradas em 2026-11-11). |
+| `lol winprob <crawl\|train\|curve\|state>` | Chance de vitória por minuto (regressão logística: ouro, XP, CS, nível, abates, torres, inibidores, placas, dragões/alma/ancião, arauto, larvas, barão, atakhan). `crawl --max N` baixa ranqueadas do mesmo elo pela Riot API (só features, sem nomes/PUUIDs) para `data/winprob/`; `train` treina e mostra calibração no teste; `curve <id>` e `state <id> <T>` consultam. A revisão de decisões mostra a chance antes → depois da janela quando há modelo. |
+| `lol junglers [--champ C] [--min-games 5]` | Padrão de começo de jogo de cada campeão no jungle (campo inicial, lado nos minutos 1–5, primeira participação em abate, primeiro objetivo), a partir das partidas do `winprob crawl`. No relatório de jungle entra a seção "Jungle inimigo: esta partida × padrão do campeão" (`"enemyJungle": false` desliga; `true` força para outras roles). |
+| `lol dashboard [--ranked] [--queue Q] [--role R] [--since D] [--until D]` | Painel de evolução (`reports/painel.html`): métricas por semana/partida com metas (constantes `METAS` em `tools/dashboard.py`). Publicar como artifact e republicar o mesmo arquivo mantém o link. |
 | `lol where <x> <y>` | Zona + 3 referências mais próximas (torres exatas, campos aproximados). |
 | `lol render <spec.json>` / `lol render --example` | Gera `.md` + `.html` do relatório a partir do spec (seção 4). |
 | `lol validate` | Revalida a classificação de zonas contra o cache. |
-| `lol selftest` | Testa tudo sem rede: compila os módulos, procura sintaxe exclusiva do Python 3.12+, confere zonas, roda as consultas e renderiza relatórios de teste numa pasta temporária (com `node --check` no JavaScript, se houver Node). **Rode depois de mexer em `tools/`.** |
+| `lol watch [--interval 120] [--queue 420,440] [--once]` | Com o cliente aberto, lê o histórico (só GET) a cada N s; partida nova → `fetch` + `new` e imprime o caminho do spec. |
+| `lol fixture [pasta]` | Gera 3 partidas sintéticas (Match-V5, jogadores `Teste1#BR1`…) para testar; use com `LOL_DATA_DIR=<pasta>`. |
+| `lol selftest [--fixture] [--keep]` | Testa tudo sem rede (`--fixture`: com as partidas sintéticas numa pasta temporária, que é o que o CI roda em Python 3.10 e 3.12): compila os módulos, procura sintaxe exclusiva do Python 3.12+, confere zonas, roda as consultas e renderiza relatórios de teste numa pasta temporária (com `node --check` no JavaScript, se houver Node). **Rode depois de mexer em `tools/`.** |
 
 Exemplos de composição:
 ```bash
@@ -58,7 +65,7 @@ Exemplos de composição:
 ./lol at <gameId> 15:31 --ref 12006,1562                                          # quem estava perto de um ponto
 ```
 
-Módulos: `common.py` (clientes LCU/Riot, helpers, `resolve_player`), `zones.py` (zonas), `landmarks.py` (torres/inibidores com coordenadas exatas tiradas dos eventos; campos aproximados), `positions.py` (posição estimada em qualquer instante usando frames + locais de kill como âncoras, sabendo quem está morto), `decisions.py` (detecção e avaliação de decisões + horários dos objetivos inferidos), `summarize.py` (com cache dos resumos em memória por processo; trate o dict como somente leitura), `query.py`, `render.py` (uma partida) + `render_multi.py` (várias partidas), `report_parts.py` (blocos de HTML/Markdown comuns aos dois renders: cards, vereditos, seções, recomendações, limitações), `selftest.py`, `templates/report.html`.
+Módulos: `common.py` (clientes LCU/Riot, helpers, `resolve_player`), `zones.py` (zonas), `landmarks.py` (torres/inibidores com coordenadas exatas tiradas dos eventos; campos aproximados), `positions.py` (posição estimada em qualquer instante usando frames + locais de kill como âncoras, sabendo quem está morto), `decisions.py` (detecção e avaliação de decisões + horários dos objetivos inferidos; constantes calibradas + `data/calibration.json`), `calibrate.py` (calibração da revisão de decisões), `winprob.py` (modelo de chance de vitória + padrões de jungle por campeão), `vision.py` (visão antes dos objetivos), `dashboard.py` + `templates/dashboard.html` (painel de evolução), `summarize.py` (com cache dos resumos em memória por processo; trate o dict como somente leitura), `query.py`, `render.py` (uma partida) + `render_multi.py` (várias partidas), `report_parts.py` (blocos de HTML/Markdown comuns aos dois renders: cards, vereditos, seções, recomendações, limitações), `selftest.py`, `templates/report.html`.
 
 ### O que cada endpoint retornou de fato (testado em 2026-11-11, cliente patch 16.22, conta BR1)
 **LCU (API local do cliente)** — `https://127.0.0.1:<porta>`, Basic Auth `riot:<senha do lockfile>`;
@@ -122,7 +129,8 @@ Pipeline de uma análise:
 2. **Investigar**, nesta ordem:
    - `lol swings <id>`: onde o ouro virou (janelas de 3 min, com abates e objetivos);
    - `lol fights <id>`: as lutas (placar, local, objetivos em volta);
-   - `lol decisions <id>`: as decisões com estado, sinais e resultado. **É a parte mais importante para o usuário** ("às 14:00 você foi bot e não devia", com o porquê);
+   - `lol decisions <id>`: as decisões com estado, sinais, resultado e chance de vitória (modelo) antes → depois. **É a parte mais importante para o usuário** ("às 14:00 você foi bot e não devia", com o porquê). Só os sinais que anteciparam resultado pior no histórico aparecem em `sinais` (hoje: "lane níveis ≥ 2" e "objetivo vivo do outro lado"); os outros ficam em `sinaisFracos` e não devem virar crítica sozinhos. Veredito: placar = Δouro do time + peso por épico (dragão/atakhan 750, larva 100, outros 300), boa ≥ 550, ruim ≤ −700 (`lol calibrate`). O veredito tem viés de resultado: nas derrotas quase toda janela perde ouro;
+   - jungle: `lol junglers --champ <jungler inimigo>` para saber o que era de se esperar do jungle inimigo;
    - detalhes com `lol frames/events/at/series/where`.
 3. **Preencher o spec**: trocar todos os `TODO` (título, resumo, vereditos, recomendações, comentários das decisões e legendas das lutas); ajustar `decisions.pick` se outro momento for mais instrutivo. `lol render --example` mostra todos os campos. Campos principais:
    - `tldr` (≤5 itens, viram cards; prefira `{"title": "O pico", "text": "..."}` com título curto), `note` (aviso opcional no topo), `timeline` (linhas `[tempo, evento, dado]`; se faltar, é gerada dos eventos);
