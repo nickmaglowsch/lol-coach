@@ -151,8 +151,10 @@ def review(s: dict, focus: dict, timers: dict, name=lambda pid: str(pid)) -> lis
     for o in s["events"]["objectives"]:
         if o["type"] not in EPIC or o["killerTeam"] not in (100, 200):
             continue
-        if fid in o["participantsCertain"]:
+        if fid in o["participantsCertain"] and o["killerTeam"] == team:
             add(o["ts"], "objetivo", f"pegou {o['name']}")
+        elif fid in o["participantsCertain"]:
+            add(o["ts"], "objetivo", f"disputou {o['name']}, mas o inimigo levou (último golpe de {name(o['killer'])})")
         elif o["killerTeam"] != team:
             fr = frame_before(s, o["ts"])
             me = fr["players"][str(fid)]
@@ -174,14 +176,18 @@ def review(s: dict, focus: dict, timers: dict, name=lambda pid: str(pid)) -> lis
         T = mo["ts"]
         before = frame_before(s, T if mo["minute"] is None else pm[mo["minute"] - 1]["ts"])
         me = before["players"][str(fid)]
+        recalled_since = any(r["pid"] == fid and before["ts"] < r["ts"] < T for r in s["events"]["recalls"])
         died_recently = any(k["victim"] == fid and 0 <= before["ts"] - k["ts"] <= 75000 for k in s["events"]["kills"])
         if mo["kind"] in ("lane", "travessia") and (me.get("hpPct") == 0 or died_recently):
             continue  # estava morto/renascendo: não é decisão de rota
         state = {"hp": me.get("hpPct"), "mana": me.get("manaPct"), "bolso": me["currentGold"], "nivel": me["level"]}
+        if recalled_since and mo["kind"] != "recall":
+            # o frame é de antes de um recall: vida e ouro do frame não valem mais
+            state.update({"hp": None, "mana": None, "bolso": None, "recallAntes": True})
         signals = []
-        if state["hp"] is not None and state["hp"] < 50 and mo["kind"] in ("lane", "travessia", "objetivo"):
+        if state.get("hp") is not None and state["hp"] < 50 and mo["kind"] in ("lane", "travessia", "objetivo"):
             signals.append(f"vida {state['hp']}%")
-        if state["bolso"] >= 1300 and T < 30 * 60000 and mo["kind"] in ("lane", "travessia", "objetivo", "morte"):
+        if state.get("bolso") is not None and state["bolso"] >= 1300 and T < 30 * 60000 and mo["kind"] in ("lane", "travessia", "objetivo", "morte"):
             signals.append(f"{state['bolso']:,} de ouro no bolso".replace(",", "."))
         lane_state = None
         if mo["kind"] == "lane" and mo["target"]:

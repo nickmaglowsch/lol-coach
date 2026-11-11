@@ -425,7 +425,7 @@ def cmd_decisions(a, out: Out) -> None:
             out.row(d)
             continue
         out.row({"time": d["time"], "kind": d["kind"], "what": d["what"],
-                 "hp": d["state"]["hp"], "bolso": d["state"]["bolso"], "nivel": d["state"]["nivel"],
+                 "hp": d["state"].get("hp"), "bolso": d["state"].get("bolso"), "nivel": d["state"]["nivel"],
                  "lane(nível;vida)": f'{d["lane"]["nivel"]};{d["lane"]["vida"]}' if d["lane"] else "",
                  "jgInimigo": f'{d["enemyJungle"]["zona"]} ~{d["enemyJungle"]["dist"]}' if d["enemyJungle"] else "",
                  "vivos": d["alive"], "sinais": d["signals"], "janela": d["window"],

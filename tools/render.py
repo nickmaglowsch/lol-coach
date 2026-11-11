@@ -456,7 +456,9 @@ def decisions_html(c: Ctx, decs: list[dict]) -> str:
     cards = []
     for d in decs:
         st, r = d["state"], d["result"]
-        now = [f'vida {st["hp"]}%' if st["hp"] is not None else None, f'{st["bolso"]:,} de ouro no bolso'.replace(",", "."),
+        now = ["voltou da base antes deste momento (vida e ouro do último frame não valem)" if st.get("recallAntes") else None,
+               f'vida {st["hp"]}%' if st.get("hp") is not None else None,
+               f'{st["bolso"]:,} de ouro no bolso'.replace(",", ".") if st.get("bolso") is not None else None,
                f'nível {st["nivel"]}']
         if d["lane"]:
             now.append(f'lane: níveis {d["lane"]["nivel"]}' + (f', vida {d["lane"]["vida"]}' if d["lane"]["vida"] else "") + " (seu time × inimigo)")
@@ -674,7 +676,10 @@ def md_report(c: Ctx) -> str:
         L += ["## Revisão de decisões", "| tempo | decisão | na hora | sinais | resultado | veredito |", "|---|---|---|---|---|---|"]
         for d in c.decisions:
             st, r = d["state"], d["result"]
-            now = f'vida {st["hp"]}%, {st["bolso"]} no bolso, nível {st["nivel"]}' + (f'; lane {d["lane"]["nivel"]}' if d["lane"] else "")
+            now = (("após recall; " if st.get("recallAntes") else "")
+                   + (f'vida {st["hp"]}%, ' if st.get("hp") is not None else "")
+                   + (f'{st["bolso"]} no bolso, ' if st.get("bolso") is not None else "")
+                   + f'nível {st["nivel"]}' + (f'; lane {d["lane"]["nivel"]}' if d["lane"] else ""))
             res = f'{r["abatesNossos"]}×{r["abatesDeles"]}, ouro {r["ouroTime"]:+d}' + (f'; +{", ".join(r["objetivosNossos"])}' if r["objetivosNossos"] else "") \
                 + (f'; −{", ".join(r["objetivosDeles"])}' if r["objetivosDeles"] else "")
             L.append(f'| {d["time"]} | {d["what"]} | {now} | {"; ".join(d["signals"]) or "—"} | {res} | {d["verdict"]} |')
