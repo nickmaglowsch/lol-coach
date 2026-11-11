@@ -1,0 +1,27 @@
+# Roda o selftest com as partidas sintéticas (tools/fixture.py): sem dados reais, sem segredos e sem rede
+# além do checkout/setup-python. O lançador `lol` é bash para o Windows; aqui chamamos o Python direto.
+name: selftest
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Selftest com a partida sintética
+        run: python tools/selftest.py --fixture
