@@ -149,7 +149,16 @@ def resolve_puuid(riot: RiotAPI, player: str | None) -> str:
         name, tag = player.rsplit("#", 1)
         return riot.account_by_riot_id(name, tag)["puuid"]
     if ME_FILE.exists():
-        return load_json(ME_FILE)["puuid"]
+        me = load_json(ME_FILE)
+        # A API oficial usa um PUUID criptografado por chave, diferente do PUUID do cliente:
+        # resolve pelo Riot ID e guarda em me.json como puuidApi.
+        if me.get("puuidApi"):
+            return me["puuidApi"]
+        if me.get("gameName") and me.get("tagLine"):
+            puuid = riot.account_by_riot_id(me["gameName"], me["tagLine"])["puuid"]
+            me["puuidApi"] = puuid
+            save_json(ME_FILE, me, indent=2)
+            return puuid
     raise SystemExit("Não sei quem é o jogador: abra o cliente (LCU) uma vez ou passe --player \"Nome#TAG\".")
 
 
@@ -192,7 +201,8 @@ def list_riot(riot: RiotAPI, puuid: str, queue: int | None, n: int, platform: st
             out.append({
                 "gameId": gid, "platformId": info.get("platformId", platform), "queueId": info.get("queueId"),
                 "creation": info.get("gameCreation"), "duration": info.get("gameDuration"),
-                "champion": me.get("championName"), "k": me.get("kills"), "d": me.get("deaths"),
+                "champion": champ_names().get(me.get("championId")) or me.get("championName"),
+                "k": me.get("kills"), "d": me.get("deaths"),
                 "a": me.get("assists"), "win": me.get("win"),
                 "remake": me.get("gameEndedInEarlySurrender", False), "source": "riot",
             })

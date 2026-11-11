@@ -24,6 +24,8 @@ from pathlib import Path
 from common import ROOT, mmss, parse_time, resolve_player
 from landmarks import LANDMARKS
 from positions import from_summary
+import report_parts as rp
+from report_parts import TIME_RE, VERDICTS, mk
 from summarize import ROLE_PT, get_summary
 from zones import zone_abs, zone_rel
 
@@ -31,7 +33,6 @@ TEMPLATE = Path(__file__).parent / "templates" / "report.html"
 # Minimapa oficial do Summoner's Rift (arte da Riot Games, via League of Legends Wiki; 512×512).
 # É embutido como data: URI porque a página do artifact não pode carregar imagens de outros sites.
 MINIMAP = Path(__file__).parent / "templates" / "assets" / "sr_minimap_512.png"
-VERDICTS = {"SUPORTADO": "ok", "REFUTADO": "bad", "INCONCLUSIVO": "unk", "MISTO": "unk"}
 EPIC = {"DRAGON", "BARON_NASHOR", "RIFTHERALD", "HORDE", "ATAKHAN"}
 ZONE_SHORT_PT = {"top": "top", "mid": "mid", "bot": "bot", "river": "rio", "jungle_ally": "jungle",
                  "jungle_enemy": "jungle inimiga", "base_ally": "base", "base_enemy": "base inimiga"}
@@ -40,7 +41,6 @@ LIMITS_SHORT = [
     "Ganks que não terminam em kill não aparecem; não dá para saber se houve tentativa sem sucesso.",
     "Flash, feitiços, HP, smite, pings, chat e voz não estão nos dados, e ninguém teve intenção atribuída.",
 ]
-TIME_RE = re.compile(r"(?<![\w:])(\d{1,2}:\d{2}(?:\s*[–-]\s*\d{1,2}:\d{2})?)(?![\w:])")
 
 EXAMPLE = {
     "gameId": 1234567890, "focus": "me", "alias": "Eu", "opponent": None, "tema": "disputa-jungle",
@@ -69,18 +69,28 @@ EXAMPLE = {
 
 
 # ----------------------------------------------------------------------------- texto
-def mk(text: str) -> str:
-    """Markup mínimo e seguro: escapa HTML, **negrito**, horários -> <time>."""
-    t = html.escape(str(text), quote=False)
-    t = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", t)
-    return TIME_RE.sub(r"<time>\1</time>", t)
-
-
 def warn(msg: str) -> None:
     print(f"[aviso] {msg}", file=sys.stderr)
 
 
-def lint(spec: dict) -> None:
+def todos(obj, path="") -> list[str]:
+    """Caminhos dos textos do spec que ainda têm TODO (esqueleto do `lol new` não preenchido)."""
+    if isinstance(obj, str):
+        return [path or "(raiz)"] if "TODO" in obj else []
+    if isinstance(obj, list):
+        return [t for i, v in enumerate(obj) for t in todos(v, f"{path}[{i}]")]
+    if isinstance(obj, dict):
+        return [t for k, v in obj.items() for t in todos(v, f"{path}.{k}" if path else k)]
+    return []
+
+
+def lint(spec: dict, draft: bool = False) -> None:
+    left = todos(spec)
+    if left and not draft:
+        raise SystemExit(f"Spec ainda tem {len(left)} TODO (ex.: {', '.join(left[:4])}). Preencha antes de publicar, "
+                         "ou use `lol render --draft` para pré-visualizar.")
+    if left:
+        warn(f"rascunho: {len(left)} TODO ainda no spec")
     if len(spec.get("recs", [])) > 3:
         raise SystemExit("Spec inválido: no máximo 3 recomendações (CLAUDE.md §4).")
     if len(spec.get("tldr", [])) > 5:
@@ -89,8 +99,10 @@ def lint(spec: dict) -> None:
         if v.get("verdict", "").upper() not in VERDICTS:
             raise SystemExit(f'Veredito inválido em "{v.get("q")}": use {", ".join(VERDICTS)}')
         for p in v.get("points", []):
-            if not TIME_RE.search(p):
-                warn(f'ponto sem minuto (regra de honestidade): "{p[:70]}"')
+            # partida única: cada ponto precisa de minuto; várias partidas: de minuto ou de contagem/número
+            ok = re.search(r"\d", p) if spec.get("mode") == "multi" else TIME_RE.search(p)
+            if not ok:
+                warn(f'ponto sem minuto/dado (regra de honestidade): "{p[:70]}"')
 
 
 # ----------------------------------------------------------------------------- dados
@@ -404,6 +416,74 @@ def icons_data(c: Ctx) -> dict:
 REPLAY_STEP = 10000  # ms entre amostras de posição (o JS interpola entre elas)
 
 
+DEC_KIND = {"lane": "rota", "travessia": "travessia", "objetivo": "objetivo", "ausente": "ausente",
+            "recall": "recall", "morte": "morte"}
+DEC_CLS = {"boa": "ok", "ruim": "bad", "neutra": "unk"}
+
+
+def decisions_data(c: Ctx) -> list[dict] | None:
+    """Revisão de decisões (decisions.py). Padrão: ligada em Summoner's Rift; `"decisions": false` desliga.
+    Spec: {"pick": ["14:00", ...]} escolhe os momentos; senão entram os com sinais ou grande impacto (máx. `max`)."""
+    cfg = c.spec.get("decisions", {})
+    if cfg is False or c.s["mapId"] != 11:
+        return None
+    from decisions import infer_timers, review
+    from summarize import cached_ids
+    timers = infer_timers([get_summary(g) for g in cached_ids()])
+    allm = review(c.s, c.focus, timers, c.name)
+    notes = cfg.get("notes", {})
+    if cfg.get("pick"):
+        want = {mmss(parse_time(t)) for t in cfg["pick"]}
+        chosen = [d for d in allm if d["time"] in want]
+    else:
+        cand = [d for d in allm if d["signals"] or abs(d["score"]) >= 1000]
+        cand.sort(key=lambda d: abs(d["score"]) + 300 * len(d["signals"]), reverse=True)
+        chosen, used = [], []
+        for d in cand:  # evita dois cards sobre a mesma janela
+            if any(abs(d["ts"] - u) < 45000 for u in used):
+                continue
+            chosen.append(d); used.append(d["ts"])
+            if len(chosen) >= cfg.get("max", 10):
+                break
+    chosen.sort(key=lambda d: d["ts"])
+    for d in chosen:
+        d["note"] = notes.get(d["time"]) or notes.get(d["time"].lstrip("0"))
+    return chosen
+
+
+def decisions_html(c: Ctx, decs: list[dict]) -> str:
+    E = rp.E
+    cards = []
+    for d in decs:
+        st, r = d["state"], d["result"]
+        now = [f'vida {st["hp"]}%' if st["hp"] is not None else None, f'{st["bolso"]:,} de ouro no bolso'.replace(",", "."),
+               f'nível {st["nivel"]}']
+        if d["lane"]:
+            now.append(f'lane: níveis {d["lane"]["nivel"]}' + (f', vida {d["lane"]["vida"]}' if d["lane"]["vida"] else "") + " (seu time × inimigo)")
+        if d["enemyJungle"]:
+            now.append(f'jungle inimigo: {rp.ZONE_LABEL.get(d["enemyJungle"]["zona"], d["enemyJungle"]["zona"])}, a ~{d["enemyJungle"]["dist"]:,}'.replace(",", "."))
+        if d["alive"]:
+            now.append("vivos (estimado): " + ", ".join(d["alive"]))
+        res = [f'abates {r["abatesNossos"]}×{r["abatesDeles"]} (você em {r["comVoce"]})',
+               f'ouro do time {r["ouroTime"]:+,d}'.replace(",", ".").replace("-", "−")]
+        if r["objetivosNossos"]:
+            res.append("seu time pegou " + ", ".join(sorted(set(r["objetivosNossos"]))))
+        if r["objetivosDeles"]:
+            res.append("inimigo pegou " + ", ".join(sorted(set(r["objetivosDeles"]))))
+        chips = "".join(f'<span class="sig">{E(x)}</span>' for x in d["signals"]) or '<span class="sub">nenhum</span>'
+        note = f'<p class="dec-note">{rp.mk(d["note"])}</p>' if d.get("note") else ""
+        cards.append(f'''<article class="dec"><div class="dec-head"><time>{E(d["time"])}</time><span class="tag">{E(DEC_KIND[d["kind"]])}</span>
+<h3>{E(d["what"])}</h3><span class="chip {DEC_CLS[d["verdict"]]}">{E(d["verdict"])}</span></div>
+<div class="dec-grid"><div><div class="eyebrow">Na hora</div><p>{E("; ".join(x for x in now if x))}</p></div>
+<div><div class="eyebrow">Sinais</div><p>{chips}</p></div>
+<div><div class="eyebrow">Resultado ({E(d["window"])})</div><p>{E("; ".join(res))}</p></div></div>{note}</article>''')
+    cap = ("O veredito vem do que aconteceu na janela (abates, objetivos e ouro do time), não do que você sabia na hora: "
+           "decisão boa às vezes dá errado. Os sinais são o que dava para ver no momento. Posições a cada minuto; "
+           "horários dos objetivos estimados pelo seu histórico (`lol timers`).")
+    return ('<section id="decisoes"><div class="eyebrow">Momento a momento</div><h2>Revisão de decisões</h2>'
+            f'<div class="decs">{"".join(cards)}</div><p class="cap">{rp.mk(cap)}</p></section>')
+
+
 def replay_data(c: Ctx) -> dict | None:
     rp = c.spec.get("replay", {})
     if rp is False or c.s["mapId"] != 11:
@@ -436,6 +516,7 @@ def replay_data(c: Ctx) -> dict | None:
                        "text": f'{who} pega {o["name"]}'})
     events.sort(key=lambda e: e["ts"])
     jumps = [[parse_time(t), lbl] for t, lbl in rp.get("jumps", [])]
+    jumps += [[d["ts"], f'{d["time"]} {DEC_KIND[d["kind"]]}'] for d in (getattr(c, "decisions", None) or [])]
     jumps += [[parse_time(f["from"]), f.get("title", "Luta " + f["from"])] for f in c.spec.get("fights", [])]
     for it in objectives_data(c)["items"]:
         jumps.append([int(it["m"] * 60000), f'{it["label"]} {it["time"]}'])
@@ -479,16 +560,7 @@ def html_body(c: Ctx, data: dict) -> str:
   <div class="score">{"".join(f"<div>{b}<span>{t}</span></div>" for b, t in tiles)}</div>
   <p class="sub"><span class="ally">Seu time</span>: {E(allies)}. <span class="enemy">Inimigos</span>: {E(enemies)}. Cada conclusão vem da timeline do jogo (um registro de posição por minuto + kills e objetivos) e recebe um veredito: <strong style="color:var(--ok)">suportado</strong>, <strong style="color:var(--bad)">refutado</strong> ou <strong style="color:var(--unk)">inconclusivo</strong>.</p>
 </header>''')
-    if sp.get("note"):
-        out.append(f'<div class="note">{mk(sp["note"])}</div>')
-    if sp.get("tldr"):
-        cards = []
-        for n, t in enumerate(sp["tldr"], 1):
-            title, text = (t.get("title", ""), t.get("text", "")) if isinstance(t, dict) else ("", t)
-            head = f'<h3>{mk(title)}</h3>' if title else ""
-            cards.append(f'<article class="card"><span class="card-n">{n}</span><div class="card-body">{head}<p>{mk(text)}</p></div></article>')
-        out.append('<section><div class="eyebrow">Em 30 segundos</div><h2>Resumo</h2><div class="cards">'
-                   + "".join(cards) + "</div></section>")
+    out += [rp.note(sp), rp.tldr(sp)]
     duel_leg = f'<span><i style="background:var(--gold)"></i>{E(c.alias)} − {E(c.opp["champion"])} (ouro)</span>' if c.opp else ""
     out.append(f'''<section><div class="eyebrow">Ouro minuto a minuto</div><h2>A partida em um gráfico</h2>
   <div class="fig"><div class="legend"><span><i style="background:var(--ally)"></i>Diferença de ouro do time (seu time − inimigo)</span>{duel_leg}</div>
@@ -524,13 +596,9 @@ def html_body(c: Ctx, data: dict) -> str:
   <label class="sr" for="rpSlider">Momento da partida</label>
   <input type="range" id="rpSlider" min="0" max="{data["replay"]["duration"]}" step="1000" value="{data["replay"]["start"]}">
 </div></section>''')
-    if sp.get("verdicts"):
-        cards = []
-        for n, v in enumerate(sp["verdicts"], 1):
-            vv = v["verdict"].upper()
-            cards.append(f'''<article class="v"><div class="v-head"><h3>{n}. {mk(v["q"])}</h3><span class="chip {VERDICTS[vv]}">{E(v.get("label") or vv.capitalize())}</span></div>
-<ul>{"".join(f"<li>{mk(p)}</li>" for p in v.get("points", []))}</ul></article>''')
-        out.append('<section><div class="eyebrow">Perguntas e alegações</div><h2>Vereditos</h2><div class="verdicts">' + "".join(cards) + "</div></section>")
+    out.append(rp.verdicts(sp, "Perguntas e alegações", "Vereditos"))
+    if data.get("decisions"):
+        out.append(decisions_html(c, data["decisions"]))
     if data.get("strip") or data.get("pathMap") or data.get("lane"):
         stp = sp.get("strip", {})
         parts = [f'<div class="eyebrow">{E(stp.get("eyebrow", "Pathing"))}</div>']
@@ -568,22 +636,16 @@ def html_body(c: Ctx, data: dict) -> str:
         cap = sp.get("objectives", {}).get("caption", "Acima da linha, objetivos do seu time; abaixo, do inimigo.")
         out.append(f'''<section><div class="eyebrow">Objetivos</div><h2>Timing de objetivos</h2>
 <div class="fig"><div class="scroll"><svg id="objChart" viewBox="0 0 820 190" role="img" aria-label="Linha do tempo dos objetivos épicos"></svg></div><p class="cap">{mk(cap)}</p></div></section>''')
-    for sec in sp.get("sections", []):
-        out.append(f'<section><div class="eyebrow">{E(sec.get("eyebrow", "Detalhe"))}</div><h2>{mk(sec["title"])}</h2>'
-                   f'<ul class="plain">{"".join(f"<li><span>{mk(p)}</span></li>" for p in sec.get("points", []))}</ul></section>')
-    if sp.get("recs"):
-        out.append('<section><div class="eyebrow">Para a próxima</div><h2>Recomendações</h2><ol class="recs">'
-                   + "".join(f'<li><div><strong>{mk(r["title"])}</strong> {mk(r.get("text", ""))}</div></li>' for r in sp["recs"])
-                   + "</ol></section>")
+    out += rp.sections(sp)
+    out.append(rp.recs(sp, "Para a próxima"))
     lim = LIMITS_SHORT + (["Recalls e roles foram inferidos; dados do histórico do cliente, sem eventos de ward ou de compra."]
                           if s["source"] == "lcu" else []) + sp.get("limitations", [])
-    out.append('<section><div class="eyebrow">O que os dados não mostram</div><ul class="limits">'
-               + "".join(f"<li>{mk(l)}</li>" for l in lim) + "</ul></section>")
+    out.append(rp.limits(lim))
     out.append(f'<footer>Gerado pelo lol-coach a partir da timeline da partida {s["gameId"]} '
                f'(fonte: {E(s["source"])}, patch {E(".".join(s["gameVersion"].split(".")[:2]))}). '
                f'Distâncias em unidades do mapa: a lane mid tem ~10.000 de ponta a ponta. '
                f'Minimapa: arte da Riot Games (League of Legends Wiki), usada como conteúdo de fã.</footer>')
-    return "\n".join(out)
+    return "\n".join(x for x in out if x)
 
 
 # ----------------------------------------------------------------------------- Markdown
@@ -593,12 +655,7 @@ def md_report(c: Ctx) -> str:
     L = [f'# {sp.get("title", "Partida " + str(s["gameId"]))}', "",
          f'{s["queue"]} · {s["date"].replace("T", " ")} · {s["durationStr"]} · **{"vitória" if st["win"] else "derrota"}** · '
          f'{c.alias} = {f["champion"]} {ROLE_PT.get(f.get("role", ""), "")} ({st["kills"]}/{st["deaths"]}/{st["assists"]}) · fonte: {s["source"]}', ""]
-    if sp.get("artifactUrl"):
-        L += [f'Versão visual: {sp["artifactUrl"]}', ""]
-    if sp.get("note"):
-        L += [f'> {sp["note"]}', ""]
-    L += ["## Resumo em 5 linhas"] + [f"{i}. " + (f'**{t["title"]}:** {t["text"]}' if isinstance(t, dict) else t)
-                                       for i, t in enumerate(sp.get("tldr", []), 1)] + [""]
+    L += rp.md_intro(sp)
     L += ["## Linha do tempo", "| Tempo | Evento | Dado |", "|---|---|---|"]
     rows = sp.get("timeline")
     if not rows:
@@ -612,25 +669,33 @@ def md_report(c: Ctx) -> str:
                              ", ".join(c.name(p) for p in o["participantsCertain"])])
         rows.sort(key=lambda r: parse_time(r[0].split("–")[0].split("-")[0]))
     L += [f"| {a} | {b} | {d} |" for a, b, d in rows] + [""]
-    if sp.get("verdicts"):
-        L += ["## Perguntas e alegações"]
-        for n, v in enumerate(sp["verdicts"], 1):
-            L += [f'### {n}. {v["q"]} → **{v.get("label") or v["verdict"].upper()}**'] + [f"- {p}" for p in v.get("points", [])] + [""]
-    for sec in sp.get("sections", []):
-        L += [f'## {sec["title"]}'] + [f"- {p}" for p in sec.get("points", [])] + [""]
-    if sp.get("recs"):
-        L += ["## Recomendações (máx. 3)"] + [f'{i}. **{r["title"]}** {r.get("text", "")}' for i, r in enumerate(sp["recs"], 1)] + [""]
-    L += ["## Limitações desta análise"] + [f"- {l}" for l in s["limitations"] + sp.get("limitations", [])] + [""]
+    L += rp.md_verdicts(sp, "Perguntas e alegações")
+    if getattr(c, "decisions", None):
+        L += ["## Revisão de decisões", "| tempo | decisão | na hora | sinais | resultado | veredito |", "|---|---|---|---|---|---|"]
+        for d in c.decisions:
+            st, r = d["state"], d["result"]
+            now = f'vida {st["hp"]}%, {st["bolso"]} no bolso, nível {st["nivel"]}' + (f'; lane {d["lane"]["nivel"]}' if d["lane"] else "")
+            res = f'{r["abatesNossos"]}×{r["abatesDeles"]}, ouro {r["ouroTime"]:+d}' + (f'; +{", ".join(r["objetivosNossos"])}' if r["objetivosNossos"] else "") \
+                + (f'; −{", ".join(r["objetivosDeles"])}' if r["objetivosDeles"] else "")
+            L.append(f'| {d["time"]} | {d["what"]} | {now} | {"; ".join(d["signals"]) or "—"} | {res} | {d["verdict"]} |')
+            if d.get("note"):
+                L.append(f'| | ↳ {d["note"]} | | | | |')
+        L.append("")
+    L += rp.md_tail(sp, s["limitations"] + sp.get("limitations", []), "Limitações desta análise")
     return "\n".join(L)
 
 
 # ----------------------------------------------------------------------------- main
-def render(spec_path: Path, only: str | None) -> list[Path]:
+def render(spec_path: Path, only: str | None, draft: bool = False) -> list[Path]:
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
-    lint(spec)
+    lint(spec, draft)
+    if spec.get("mode") == "multi":
+        from render_multi import render_multi
+        return render_multi(spec_path, spec, only, TEMPLATE)
     s = get_summary(int(spec["gameId"]))
     c = Ctx(spec, s)
-    data = {"gold": gold_data(c), "strip": strip_data(c), "pathMap": path_data(c), "lane": lane_data(c),
+    c.decisions = decisions_data(c)
+    data = {"decisions": c.decisions,"gold": gold_data(c), "strip": strip_data(c), "pathMap": path_data(c), "lane": lane_data(c),
             "fights": [fight_data(c, f) for f in spec.get("fights", [])], "objectives": objectives_data(c),
             "replay": replay_data(c), "structures": structures_data(c),
             "icons": icons_data(c),
@@ -654,13 +719,14 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("spec", nargs="?", help="arquivo .json do spec (em reports/)")
     ap.add_argument("--only", choices=["html", "md"])
+    ap.add_argument("--draft", action="store_true", help="aceita spec com TODO (pré-visualização; não publique)")
     ap.add_argument("--example", action="store_true", help="imprime um spec de exemplo")
     a = ap.parse_args()
     if a.example:
         print(json.dumps(EXAMPLE, ensure_ascii=False, indent=2)); return
     if not a.spec:
         ap.error("informe o spec")
-    for p in render(Path(a.spec).resolve(), a.only):
+    for p in render(Path(a.spec).resolve(), a.only, a.draft):
         try:
             print(p.relative_to(ROOT))
         except ValueError:

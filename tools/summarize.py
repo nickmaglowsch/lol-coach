@@ -26,7 +26,7 @@ from positions import Positions
 from zones import ZONE_PT, zone_rel
 
 STATIC = DATA / "static"
-SUMMARY_VERSION = 3
+SUMMARY_VERSION = 4
 NEAR_OBJ = 2500     # raio (unidades) para "perto do objetivo" (estimado)
 NEAR_KILL = 2000    # raio para aliados/inimigos perto de uma kill (estimado)
 ROLE_PT = {"TOP": "top", "JUNGLE": "jungle", "MIDDLE": "mid", "BOTTOM": "adc", "UTILITY": "suporte", "": "?"}
@@ -92,6 +92,11 @@ def _frames(raw_frames) -> list[dict]:
                 "cs": v.get("minionsKilled", 0) + v.get("jungleMinionsKilled", 0),
                 "jungleCs": v.get("jungleMinionsKilled", 0),
             }
+            cs_ = v.get("championStats") or {}  # só Match-V5: vida e mana no instante do frame
+            if cs_.get("healthMax"):
+                pf[int(k)]["hpPct"] = round(100 * cs_.get("health", 0) / cs_["healthMax"])
+            if cs_.get("powerMax"):
+                pf[int(k)]["manaPct"] = round(100 * cs_.get("power", 0) / cs_["powerMax"])
         out.append({"ts": f["timestamp"], "pf": pf, "events": f.get("events", [])})
     return out
 
@@ -127,10 +132,11 @@ def _norm_lcu(m: dict, t: dict) -> dict:
 
 def _norm_v5(m: dict, t: dict) -> dict:
     info = m["info"]
+    champs = champ_map()  # nomes em pt-BR do cliente; a API usa nomes internos ("Chogath", "MonkeyKing")
     parts = []
     for p in info["participants"]:
         parts.append({
-            "pid": p["participantId"], "team": p["teamId"], "champion": p.get("championName"),
+            "pid": p["participantId"], "team": p["teamId"], "champion": champs.get(p.get("championId")) or p.get("championName"),
             "championId": p.get("championId"),
             "riotId": f'{p.get("riotIdGameName", "?")}#{p.get("riotIdTagline", "?")}', "puuid": p.get("puuid"),
             "spells": [p.get("summoner1Id"), p.get("summoner2Id")], "position": p.get("teamPosition") or None,
@@ -250,7 +256,8 @@ def summarize_game(gid: int) -> dict:
             team = P[pid]["team"]
             z = zone_rel(v["x"], v["y"], team) if (sr and v["x"] is not None) else None
             row = {"zone": z, "x": v["x"], "y": v["y"], "gold": v["totalGold"], "currentGold": v["currentGold"],
-                   "xp": v["xp"], "cs": v["cs"], "level": v["level"]}
+                   "xp": v["xp"], "cs": v["cs"], "level": v["level"],
+                   "hpPct": v.get("hpPct"), "manaPct": v.get("manaPct")}
             players[pid] = row
             for k in ("gold", "xp", "cs"):
                 teams[team][k] += row[k]
@@ -551,27 +558,51 @@ def cached_ids() -> list[int]:
     return ids
 
 
+_SUMMARY_CACHE: dict[int, dict] = {}
+
+
 def get_summary(gid: int) -> dict:
+    """Resumo da partida (gera se faltar ou estiver desatualizado). Fica em memória durante o processo:
+    relatórios de várias partidas leem o mesmo resumo várias vezes. Trate o dict como somente leitura."""
+    gid = int(gid)
+    if gid in _SUMMARY_CACHE:
+        return _SUMMARY_CACHE[gid]
     p = SUMMARIES / f"{gid}.json"
+    s = None
     if p.exists():
         s = load_json(p)
         src_v5 = (MATCHES / str(gid) / "timeline_v5.json").exists()
-        if s.get("summaryVersion") == SUMMARY_VERSION and (s["source"] != "lcu" or not src_v5):
-            return s
-    return summarize_game(gid)
+        if not (s.get("summaryVersion") == SUMMARY_VERSION and (s["source"] != "lcu" or not src_v5)):
+            s = None
+    if s is None:
+        s = summarize_game(gid)
+    _SUMMARY_CACHE[gid] = s
+    return s
 
 
-def aggregate_player(who: str, n: int, queue: int | None) -> dict:
+def aggregate_player(who: str, n: int, queue: int | None, result: str | None = None,
+                     role: str | None = None, ranked: bool = False, since: str | None = None,
+                     until: str | None = None) -> dict:
     rows = []
+    role_key = {v: k for k, v in ROLE_PT.items()}.get(role, role.upper() if role else None)
     for gid in cached_ids():
         s = get_summary(gid)
         if queue is not None and s["queueId"] != queue:
             continue
+        if ranked and s["queueId"] not in (420, 440):
+            continue
+        if (since and s["date"][:10] < since) or (until and s["date"][:10] > until):
+            continue
         if s["mapId"] != 11 or (s["duration"] or 0) < 300:
             continue
         p = find_focus(s, who)
-        if p:
-            rows.append((s, p))
+        if not p:
+            continue
+        if result and (p["stats"]["win"] != (result == "win")):
+            continue
+        if role_key and p.get("role") != role_key:
+            continue
+        rows.append((s, p))
     rows.sort(key=lambda r: r[0]["gameCreation"] or 0, reverse=True)
     rows = rows[:n]
     if not rows:
@@ -650,6 +681,11 @@ def main() -> None:
     ap.add_argument("--player", help='modo multi-partida: "Nome#TAG"')
     ap.add_argument("--games", type=int, default=10)
     ap.add_argument("--queue", type=int, default=None)
+    ap.add_argument("--ranked", action="store_true", help="modo --player: só Solo/Duo e Flex")
+    ap.add_argument("--result", choices=["win", "loss"], help="modo --player: só vitórias ou só derrotas")
+    ap.add_argument("--role", help="modo --player: top, jungle, mid, adc ou suporte")
+    ap.add_argument("--since", help="modo --player: AAAA-MM-DD (inclusive)")
+    ap.add_argument("--until", help="modo --player: AAAA-MM-DD (inclusive)")
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--all", action="store_true", help="(re)gera resumos de todas as partidas em cache")
     a = ap.parse_args()
@@ -659,7 +695,7 @@ def main() -> None:
             print(SUMMARIES / f"{gid}.json")
         return
     if a.player:
-        agg = aggregate_player(a.player, a.games, a.queue)
+        agg = aggregate_player(a.player, a.games, a.queue, a.result, a.role, a.ranked, a.since, a.until)
         tag = a.player.replace("#", "_").replace(" ", "_")
         save_json(SUMMARIES / f"player-{tag}.json", agg, indent=1)
         print_aggregate(agg)

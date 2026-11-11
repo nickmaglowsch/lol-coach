@@ -27,7 +27,7 @@ Coach de League of Legends baseado nos **dados da timeline** das suas partidas, 
 ./lol summarize --player "Nome#TAG" --games 10 --queue 440   # padrões em várias partidas
 ```
 
-No PowerShell use `.\lol` (é o `lol.cmd`). Para ir além das 20 partidas mais recentes, o cliente não pagina: use a API oficial com `RIOT_API_KEY` (veja o `CLAUDE.md`).
+No PowerShell use `.\lol` (é o `lol.cmd`). Depois de mexer no código, rode `./lol selftest`: ele testa tudo sem rede usando as partidas em cache. Para ir além das 20 partidas mais recentes, o cliente não pagina: use a API oficial com `RIOT_API_KEY` (veja o `CLAUDE.md`).
 
 ### Consultas
 
@@ -40,6 +40,18 @@ No PowerShell use `.\lol` (é o `lol.cmd`). Para ir além das 20 partidas mais r
 ```
 
 ### Relatório com replay
+
+O jeito mais rápido é começar pelo esqueleto:
+
+```bash
+./lol new latest-flex --tema review     # baixa, resume e grava reports/<data>-<id>-review.json com TODOs
+./lol swings <gameId>                   # onde o ouro virou
+./lol fights <gameId>                   # as lutas
+./lol decisions <gameId>                # decisão por decisão: estado na hora, sinais e resultado
+```
+
+Depois de trocar os `TODO` do spec pelo seu julgamento, rode `./lol render reports/<arquivo>.json`. O render recusa spec com `TODO`; use `--draft` só para pré-visualizar. Os passos abaixo mostram como montar o spec à mão.
+
 
 1. Escreva o spec da análise em `reports/<data>-<gameId>-<tema>.json`. O comando `./lol render --example` mostra todos os campos.
 2. Rode `./lol render reports/<arquivo>.json`. Ele gera o `.md` e o `.html` ao lado do spec.

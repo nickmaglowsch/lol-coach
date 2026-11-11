@@ -24,6 +24,9 @@ if /I "%CMD%"=="sum" ( "%PY%" "%ROOT%tools\summarize.py" %ARGS% & goto end )
 if /I "%CMD%"=="where" ( "%PY%" "%ROOT%tools\landmarks.py" %ARGS% & goto end )
 if /I "%CMD%"=="render" ( "%PY%" "%ROOT%tools\render.py" %ARGS% & goto end )
 if /I "%CMD%"=="validate" ( "%PY%" "%ROOT%tools\zones.py" validate & goto end )
+if /I "%CMD%"=="selftest" ( "%PY%" "%ROOT%tools\selftest.py" & goto end )
+if /I "%CMD%"=="spec" ( "%PY%" "%ROOT%tools\scaffold.py" spec %ARGS% & goto end )
+if /I "%CMD%"=="new" ( "%PY%" "%ROOT%tools\scaffold.py" new %ARGS% & goto end )
 "%PY%" "%ROOT%tools\query.py" %CMD% %ARGS%
 goto end
 :fetch
