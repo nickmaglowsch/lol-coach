@@ -58,6 +58,7 @@ Modelos e calibração (precisam de partidas em cache; o crawl usa a Riot API):
 ./lol calibrate all --write             # recalibra sinais, pesos dos objetivos e cortes boa/ruim
 ./lol winprob crawl --max 1000          # baixa ranqueadas do mesmo elo (só features, sem nomes) para data/winprob/
 ./lol winprob train                     # treina o modelo de chance de vitória
+./lol winprob nightly --log data/winprob/nightly.log   # rotina noturna: suas partidas + crawl + padrões + retreino (volta ao modelo anterior se piorar)
 ./lol winprob curve <gameId>            # chance de vitória minuto a minuto
 ./lol junglers --champ Shaco            # o que esse campeão costuma fazer nos primeiros minutos
 ./lol dashboard --ranked                # reports/painel.html: evolução com metas
