@@ -283,12 +283,14 @@ def me_puuid() -> str | None:
 
 
 def me_ids() -> set[str]:
-    """Identificadores da conta do usuário: PUUID do cliente, PUUID da API oficial e Riot ID."""
+    """Identificadores da conta do usuário: PUUID do cliente, PUUID da API oficial (o atual e os de chaves
+    anteriores, porque a Riot criptografa o PUUID por projeto/chave) e Riot ID."""
     p = DATA / "me.json"
     if not p.exists():
         return set()
     me = load_json(p)
-    return {v for v in (me.get("puuid"), me.get("puuidApi"), (me.get("riotId") or "").lower()) if v}
+    ids = (me.get("puuid"), me.get("puuidApi"), *me.get("puuidApiOld", []), (me.get("riotId") or "").lower())
+    return {v for v in ids if v}
 
 
 def _norm(s: str) -> str:
