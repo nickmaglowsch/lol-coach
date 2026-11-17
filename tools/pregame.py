@@ -350,7 +350,7 @@ def plan(ally: dict[str, int], enemy: dict[str, int], team: int | None, me_role:
             E.append(f"{ej_name}: primeira participação em abate com mediana {ft['medianTime']}, antes de 4:00 em "
                      f"{pct(ft['before4min'])} das partidas, nas lanes {top(ft.get('zone', {}), 3)}")
         E.append(f"{ej_name}: morre antes de 10:00 em {pct(pat['firstDeathBefore10'])} das partidas; primeiro objetivo "
-                 f"do time dele até 10:00: {top(pat['firstTeamObjective'], 3)}")
+                 f"do time inimigo até 10:00: {top(pat['firstTeamObjective'], 3)}")
     elif ej_name:
         E.append(f"{ej_name}: sem amostra no jungle (menos de 5 partidas coletadas): sem padrão para esperar")
     for side in ("top", "mid", "bot"):
@@ -485,7 +485,7 @@ def page(p: dict, alias: str) -> str:
         kv = "".join(f"<div><b>{H(v)}</b><span>{H(k)}</span></div>" for v, k in cells)
         B.append(f'<section><div class="eyebrow">Jungle inimigo</div><h2>{H(ej["champion"])} '
                  f'<span class="sub">· {ej["games"]} partidas no elo</span></h2><div class="kv">{kv}</div>'
-                 f'<p class="sub">Começa em {H(top(ej["startCamp"], 2))}. Primeiro objetivo do time dele até 10:00: '
+                 f'<p class="sub">Começa em {H(top(ej["startCamp"], 2))}. Primeiro objetivo do time inimigo até 10:00: '
                  f'{H(top(ej["firstObjective"], 3))}.</p></section>')
     elif p["enemy"].get("JUNGLE"):
         B.append(f'<section><div class="eyebrow">Jungle inimigo</div><h2>{H(p["enemy"]["JUNGLE"])}</h2>'

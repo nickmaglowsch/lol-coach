@@ -22,7 +22,7 @@ import datetime as dt
 import sys
 import time
 
-from common import (DATA, MATCHES, LCU, LCUError, RiotAPI, RiotAPIError, load_json,
+from common import (DATA, MATCHES, LCU, LCUError, RiotAPI, RiotAPIError, load_json, me_ids,
                     queue_name, save_json)
 
 ME_FILE = DATA / "me.json"  # puuid / riot id / plataforma da conta (sem segredos)
@@ -186,6 +186,8 @@ def list_lcu(lcu: LCU) -> list[dict]:
 
 def list_riot(riot: RiotAPI, puuid: str, queue: int | None, n: int, platform: str) -> list[dict]:
     out, start = [], 0
+    # partidas em cache baixadas com outra chave trazem o PUUID criptografado daquela chave
+    mine = {puuid} | me_ids()
     while len(out) < n:
         ids = riot.match_ids(puuid, queue=queue, start=start, count=min(100, n - len(out)))
         if not ids:
@@ -197,7 +199,9 @@ def list_riot(riot: RiotAPI, puuid: str, queue: int | None, n: int, platform: st
             if not cached.exists():
                 save_json(cached, m)
             info = m["info"]
-            me = next(p for p in info["participants"] if p["puuid"] == puuid)
+            me = next((p for p in info["participants"] if p["puuid"] in mine), None)
+            if me is None:
+                continue
             out.append({
                 "gameId": gid, "platformId": info.get("platformId", platform), "queueId": info.get("queueId"),
                 "creation": info.get("gameCreation"), "duration": info.get("gameDuration"),

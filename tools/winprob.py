@@ -404,7 +404,7 @@ def enemy_jungle_compare(s: dict, team: int) -> dict | None:
     rows.append(["1ª participação em abate", this, elo])
     obj = next((o for o in s["events"]["objectives"] if o["ts"] <= 600000 and o.get("killerTeam") == jt
                 and o["type"] in ("DRAGON", "HORDE", "RIFTHERALD")), None)
-    rows.append(["1º objetivo do time dele até 10:00", obj["name"] if obj else "nenhum", top(pat["firstTeamObjective"])])
+    rows.append(["1º objetivo do time até 10:00", obj["name"] if obj else "nenhum", top(pat["firstTeamObjective"])])
     return {"champion": jg["champion"], "games": pat["games"], "winRate": pat["winRate"],
             "sample": load_json(JUNGLE).get("games"), "rows": rows}
 
