@@ -173,7 +173,8 @@ def test_data(fixture: dict | None = None) -> None:
     gid = str(s["gameId"])
     for args in (["players", gid], ["frames", gid, "--to", "3"], ["events", gid, "--to", "10:00"], ["at", gid, "10:00"],
                  ["series", gid, "team"], ["games", "--n", "3"], ["lanes", "--n", "3"], ["paths", "--n", "3"], ["find"],
-                 ["fights", gid], ["swings", gid], ["timers"], ["decisions", gid]):
+                 ["fights", gid], ["swings", gid], ["timers"], ["decisions", gid], ["ganks", gid], ["skirmishes", gid],
+                 ["totals", gid]):
         r = run_lol(*args)
         check(r.returncode == 0 and r.stdout.strip() != "", f"lol {' '.join(args[:1] + ['…'] if len(args) > 1 else args)}"
               + (f" ({r.stderr.strip().splitlines()[-1]})" if r.returncode else ""))
@@ -414,8 +415,23 @@ def test_data(fixture: dict | None = None) -> None:
         ids_expected += ["mapFight0"] if kill else []
         check_html(p.with_suffix(".html"), ids_expected, "uma partida")
         if s["source"] != "lcu":
-            check("Visão antes dos objetivos" in p.with_suffix(".html").read_text(encoding="utf-8"),
-                  "uma partida: seção de visão antes dos objetivos")
+            html_ = p.with_suffix(".html").read_text(encoding="utf-8")
+            check("Visão antes dos objetivos" in html_, "uma partida: seção de visão antes dos objetivos")
+            check("Totais da partida" in html_ and "Pings (total" in html_, "uma partida: totais da API oficial (pings, feitiços)")
+            # API oficial: lutas/ganks pelo dano por minuto, âncoras novas e recall confirmado pela compra
+            ev = s["events"]
+            from positions import from_summary
+            from zones import zone_rel
+            pos_ = from_summary(s)
+            base_ok = all((zone_rel(*(lambda q: (q["x"], q["y"]))(pos_.at(a_[1], a_[0])),
+                                    next(q["team"] for q in s["participants"] if q["pid"] == a_[1])) or "").startswith("base")
+                          for a_ in ev.get("anchors", []) if a_[4] == "base")
+            check(bool(ev.get("skirmishes")) and isinstance(ev.get("ganks"), list)
+                  and all({"jungler", "lane", "dmg", "kills"} <= set(g) for g in ev["ganks"]),
+                  f"API oficial: {len(ev['skirmishes'])} lutas e {len(ev['ganks'])} ganks estimados pelo dano por minuto")
+            check(any(a_[4] == "base" for a_ in ev.get("anchors", [])) and base_ok,
+                  "API oficial: compras viram âncora na base (posição estimada cai na base)")
+            check(any("confirmado pela compra" in r["kind"] for r in ev["recalls"]), "API oficial: recall confirmado pela compra")
         md = p.with_suffix(".md").read_text(encoding="utf-8")
         check(all(h in md for h in ("## Resumo em 5 linhas", "## Linha do tempo", "## Recomendações", "## Limitações")),
               "uma partida: Markdown com as seções obrigatórias")

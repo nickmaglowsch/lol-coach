@@ -22,11 +22,11 @@ from itertools import permutations
 from common import (DATA, MATCHES, SUMMARIES, load_json, me_puuid, mmss, queue_name,
                     resolve_player, save_json)
 from landmarks import describe as landmark
-from positions import Positions
+from positions import Positions, extra_anchors
 from zones import ZONE_PT, zone_rel
 
 STATIC = DATA / "static"
-SUMMARY_VERSION = 4
+SUMMARY_VERSION = 5
 NEAR_OBJ = 2500     # raio (unidades) para "perto do objetivo" (estimado)
 NEAR_KILL = 2000    # raio para aliados/inimigos perto de uma kill (estimado)
 ROLE_PT = {"TOP": "top", "JUNGLE": "jungle", "MIDDLE": "mid", "BOTTOM": "adc", "UTILITY": "suporte", "": "?"}
@@ -39,14 +39,13 @@ MONSTER_PT = {"DRAGON": "dragão", "RIFTHERALD": "arauto", "BARON_NASHOR": "bar�
 
 LIMITATIONS_BASE = [
     "Posições dos jogadores só existem a cada ~60s (um frame por minuto); o que acontece entre frames não é observado.",
-    "Ganks/rotações que não terminaram em kill, assistência ou objetivo não geram evento: não dá para provar que um gank falhou ou não aconteceu.",
-    "Flash e demais feitiços de invocador, uso de habilidades, dano trocado em lane e HP/mana não aparecem na timeline.",
-    "Pings, chat, calls e voz não estão nos dados; nunca inferir intenção ou comunicação.",
-    "'Quem estava perto' de objetivos/kills é ESTIMADO por interpolação linear entre frames de 60s (exceto quem matou/assistiu, que é certo).",
-    "Recall não é um evento: é INFERIDO por gasto de ouro / posição na base sem morte recente.",
+    "Chat, calls e voz não estão nos dados; nunca inferir intenção ou comunicação.",
+    "'Quem estava perto' de objetivos/kills é ESTIMADO por interpolação linear entre âncoras (frames de 60s e eventos com posição); quem matou/assistiu é certo.",
     "Roles podem ser inferidas (veja participants[].roleSource); confira roleConfidence.",
 ]
 LIMITATIONS_LCU = [
+    "Fonte LCU: ganks e rotações sem abate, assistência ou objetivo não geram evento (sem dano por minuto nesta fonte).",
+    "Fonte LCU: Flash, habilidades, pings e HP/mana não aparecem; recall é INFERIDO por gasto de ouro / posição na base.",
     "Fonte LCU: a timeline do cliente só traz CHAMPION_KILL, ELITE_MONSTER_KILL e BUILDING_KILL. "
     "Não há wards colocadas/destruídas por evento, compras de itens, level-ups nem placas de torre. "
     "Wards só existem como totais por jogador (stats); compras são estimadas por ouro gasto por minuto. "
@@ -55,7 +54,36 @@ LIMITATIONS_LCU = [
 ]
 LIMITATIONS_V5 = [
     "Fonte Match-V5: eventos de ward não têm posição (só quem colocou/destruiu e o tipo).",
+    "Fonte Match-V5: lutas e ganks sem abate são ESTIMADOS pelo dano a campeões em cada minuto e pela posição "
+    "interpolada; um gank que só fez o laner recuar, sem dano, não aparece.",
+    "Fonte Match-V5: Flash, habilidades e pings só como TOTAL na partida (sem horário); vida e mana só no instante de cada frame.",
+    "Fonte Match-V5: recall é confirmado pela compra na base (sem compra, uma volta à base não aparece).",
 ]
+PING_PT = {"allInPings": "tudo dentro", "assistMePings": "me ajude", "basicPings": "ping básico", "commandPings": "comando",
+           "dangerPings": "perigo", "enemyMissingPings": "inimigo sumiu", "enemyVisionPings": "visão inimiga",
+           "getBackPings": "recuar", "holdPings": "segurar", "needVisionPings": "precisa de visão",
+           "onMyWayPings": "a caminho", "pushPings": "empurrar", "retreatPings": "retirada",
+           "visionClearedPings": "visão limpa"}
+SPELL_PT = {1: "Purificar", 3: "Exaustão", 4: "Flash", 6: "Fantasma", 7: "Curar", 11: "Smite", 12: "Teleporte",
+            14: "Incendiar", 21: "Barreira", 32: "Marca"}
+CHALLENGES_PT = {   # estatísticas prontas da Riot (Match-V5 `challenges`), totais da partida
+    "soloKills": "abates solo", "takedownsFirstXMinutes": "participações em abate até 10 min",
+    "skillshotsHit": "skillshots acertadas", "skillshotsDodged": "skillshots esquivadas",
+    "maxCsAdvantageOnLaneOpponent": "maior vantagem de CS sobre o oponente",
+    "maxLevelLeadLaneOpponent": "maior vantagem de nível sobre o oponente",
+    "visionScoreAdvantageLaneOpponent": "vantagem de visão sobre o oponente",
+    "controlWardsPlaced": "sentinelas de controle colocadas", "wardTakedowns": "sentinelas destruídas",
+    "scuttleCrabKills": "aronguejos", "enemyJungleMonsterKills": "campos da jungle inimiga",
+    "epicMonsterSteals": "épicos roubados", "jungleCsBefore10Minutes": "CS de jungle até 10 min",
+    "laneMinionsFirst10Minutes": "minions até 10 min", "killsOnLanersEarlyJungleAsJungler": "abates em laners no começo (jungler)",
+    "outnumberedKills": "abates em desvantagem numérica", "killsNearEnemyTurret": "abates perto de torre inimiga",
+    "survivedSingleDigitHpCount": "sobreviveu com menos de 10% de vida", "turretPlatesTaken": "placas pegas",
+    "teamDamagePercentage": "parte do dano do time", "damagePerMinute": "dano a campeões por minuto",
+    "goldPerMinute": "ouro por minuto", "saveAllyFromDeath": "salvou aliado da morte",
+}
+SKIRMISH_DMG = 120     # dano a campeões num minuto para contar como troca/luta (estimado)
+SKIRMISH_LINK = 3000   # distância para ligar dois jogadores de times opostos na mesma luta
+GANK_UNTIL = 900000    # ganks: só até 15:00
 
 
 # ============================================================================ util
@@ -92,6 +120,9 @@ def _frames(raw_frames) -> list[dict]:
                 "cs": v.get("minionsKilled", 0) + v.get("jungleMinionsKilled", 0),
                 "jungleCs": v.get("jungleMinionsKilled", 0),
             }
+            ds = v.get("damageStats") or {}      # só Match-V5: dano a campeões acumulado até o frame
+            if "totalDamageDoneToChampions" in ds:
+                pf[int(k)]["dmgChamps"] = ds["totalDamageDoneToChampions"]
             cs_ = v.get("championStats") or {}  # só Match-V5: vida e mana no instante do frame
             if cs_.get("healthMax"):
                 pf[int(k)]["hpPct"] = round(100 * cs_.get("health", 0) / cs_["healthMax"])
@@ -148,6 +179,15 @@ def _norm_v5(m: dict, t: dict) -> dict:
                 "wardsKilled": p.get("wardsKilled"), "controlWardsBought": p.get("visionWardsBoughtInGame"),
                 "champLevel": p.get("champLevel"), "win": bool(p.get("win")),
             },
+            "pings": {k: p[k] for k in PING_PT if k in p} or None,
+            "casts": ({"Q": p.get("spell1Casts"), "W": p.get("spell2Casts"), "E": p.get("spell3Casts"),
+                       "R": p.get("spell4Casts"),
+                       "summoners": [{"id": p.get("summoner1Id"), "name": SPELL_PT.get(p.get("summoner1Id"), str(p.get("summoner1Id"))),
+                                      "casts": p.get("summoner1Casts")},
+                                     {"id": p.get("summoner2Id"), "name": SPELL_PT.get(p.get("summoner2Id"), str(p.get("summoner2Id"))),
+                                      "casts": p.get("summoner2Casts")}]}
+                      if "spell1Casts" in p else None),
+            "challenges": {k: p["challenges"][k] for k in CHALLENGES_PT if k in (p.get("challenges") or {})} or None,
         })
     win_team = next((tm["teamId"] for tm in info.get("teams", []) if tm.get("win")), None)
     return {
@@ -228,10 +268,11 @@ def summarize_game(gid: int) -> dict:
     for e in all_events:
         if e.get("type") == "CHAMPION_KILL":
             deaths_ts[e["victimId"]].append(e["timestamp"])
+    anchors = extra_anchors(all_events, {pid: p["team"] for pid, p in P.items()}) if sr else []
     positions = Positions(
         [(f["ts"], {pid: (v["x"], v["y"]) for pid, v in f["pf"].items()}) for f in frames],
         [(e["timestamp"], e["victimId"], e.get("killerId"), (e.get("position") or {}).get("x"),
-          (e.get("position") or {}).get("y")) for e in all_events if e.get("type") == "CHAMPION_KILL"])
+          (e.get("position") or {}).get("y")) for e in all_events if e.get("type") == "CHAMPION_KILL"], anchors)
 
     def nearby(ts, x, y, radius, exclude=()):
         """Jogadores vivos a <= radius de (x,y) no instante ts (estimado; veja positions.py)."""
@@ -257,7 +298,7 @@ def summarize_game(gid: int) -> dict:
             z = zone_rel(v["x"], v["y"], team) if (sr and v["x"] is not None) else None
             row = {"zone": z, "x": v["x"], "y": v["y"], "gold": v["totalGold"], "currentGold": v["currentGold"],
                    "xp": v["xp"], "cs": v["cs"], "level": v["level"],
-                   "hpPct": v.get("hpPct"), "manaPct": v.get("manaPct")}
+                   "hpPct": v.get("hpPct"), "manaPct": v.get("manaPct"), "dmgChamps": v.get("dmgChamps")}
             players[pid] = row
             for k in ("gold", "xp", "cs"):
                 teams[team][k] += row[k]
@@ -364,8 +405,8 @@ def summarize_game(gid: int) -> dict:
             for t0 in visits:
                 died = any(0 <= t0 - d <= 90000 for d in deaths_ts[pid])
                 recalls.append({"pid": pid, "time": mmss(t0), "ts": t0,
-                                "kind": "volta à base após morte" if died else "recall (inferido)",
-                                "evidence": "compra de item"})
+                                "kind": "volta à base após morte" if died else "recall (confirmado pela compra)",
+                                "evidence": "compra de item (só dá para comprar na base)"})
         else:
             for i in range(2, len(frames)):
                 f0, f1 = frames[i - 1], frames[i]
@@ -391,6 +432,9 @@ def summarize_game(gid: int) -> dict:
             continue
         dedup.append(r)
     recalls = sorted(dedup, key=lambda r: r["ts"])
+
+    skirmishes, ganks = (find_skirmishes(per_minute, kills, positions, P, sr)
+                         if sr and any(v.get("dmgChamps") is not None for v in frames[-1]["pf"].values()) else ([], []))
 
     # ---------------- agregados por jogador
     def at(minute, pid, key):
@@ -425,6 +469,10 @@ def summarize_game(gid: int) -> dict:
             "objParticipationIncludingNearEst": part_est,
             "killParticipation": round(kp, 3) if kp is not None else None,
             "recallsInferred": sum(1 for r in recalls if r["pid"] == pid and r["kind"].startswith("recall")),
+            "ganksEst": ({"total": sum(1 for g_ in ganks if g_["jungler"] == pid),
+                          "withKill": sum(1 for g_ in ganks if g_["jungler"] == pid and g_["kills"]),
+                          "noKill": sum(1 for g_ in ganks if g_["jungler"] == pid and not g_["kills"])}
+                         if p.get("role") == "JUNGLE" and ganks is not None else None),
         }
 
     limitations = list(LIMITATIONS_BASE) + (LIMITATIONS_LCU if g["source"] == "lcu" else LIMITATIONS_V5)
@@ -446,11 +494,106 @@ def summarize_game(gid: int) -> dict:
         "participants": [{k: v for k, v in p.items() if k != "position"} for p in parts],
         "perMinute": per_minute,
         "events": {"kills": kills, "objectives": objectives, "wards": ward_summary,
-                   "purchases": purchases, "recalls": recalls},
+                   "purchases": purchases, "recalls": recalls, "skirmishes": skirmishes, "ganks": ganks,
+                   "anchors": anchors},
         "limitations": limitations,
     }
     save_json(SUMMARIES / f"{gid}.json", summary)
     return summary
+
+
+# ============================================================================ lutas sem abate (estimado)
+def find_skirmishes(per_minute: list, kills: list, positions, P: dict, sr: bool) -> tuple[list, list]:
+    """Trocas/lutas a partir do dano a campeões em cada minuto (Match-V5), com ou sem abate. ESTIMADO.
+
+    Quem causou >= SKIRMISH_DMG de dano a campeões no minuto se liga a cada inimigo vivo que chegou a
+    <= SKIRMISH_LINK dele em algum instante da janela (posições interpoladas a cada 10 s; o alvo pode não ter
+    revidado, como o laner que foge do gank). Cada componente com os dois times é uma luta, localizada no instante
+    de maior aproximação. Quem causou dano sem nenhum inimigo perto nas posições estimadas vira uma luta
+    "sem local". Ganks = lutas até 15:00 com o jungler numa lane (ou no rio junto de um laner inimigo)."""
+    out, ganks = [], []
+    for a, b in zip(per_minute, per_minute[1:]):
+        t0, t1 = a["ts"], b["ts"]
+        dmg = {}
+        for pid in P:
+            d0, d1 = a["players"][pid].get("dmgChamps"), b["players"][pid].get("dmgChamps")
+            if d0 is not None and d1 is not None and d1 - d0 >= SKIRMISH_DMG:
+                dmg[pid] = d1 - d0
+        if not dmg:
+            continue
+        samples = list(range(t0, t1 + 1, 10000))
+        where = {}          # pid -> {ts: (x, y)} só quando vivo e fora da base
+        for pid in P:
+            w = {}
+            for t in samples:
+                pp = positions.at(pid, t)
+                if pp and not pp["dead"] and not (zone_rel(pp["x"], pp["y"], P[pid]["team"]) or "").startswith("base"):
+                    w[t] = (pp["x"], pp["y"])
+            where[pid] = w
+        parent = {pid: pid for pid in P}
+
+        def root(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+        best = {}           # pid ativo -> (distância, instante) da maior aproximação a um inimigo
+        for p1 in dmg:
+            for p2 in P:
+                if P[p1]["team"] == P[p2]["team"]:
+                    continue
+                common = set(where[p1]) & set(where[p2])
+                if not common:
+                    continue
+                t, d = min(((t, math.dist(where[p1][t], where[p2][t])) for t in common), key=lambda r: r[1])
+                if d <= SKIRMISH_LINK:
+                    parent[root(p1)] = root(p2)
+                    if p1 not in best or d < best[p1][0]:
+                        best[p1] = (d, t)
+        groups = defaultdict(list)
+        for pid in P:
+            groups[root(pid)].append(pid)
+        for members in groups.values():
+            active = [m for m in members if m in dmg]
+            if not active:
+                continue
+            located = len({P[m]["team"] for m in members}) == 2
+            if located:
+                lead = max((m for m in active if m in best), key=lambda m: dmg[m], default=None)
+                tt = best[lead][1] if lead else t0
+                pts = [where[m][tt] for m in members if tt in where[m]]
+                cx, cy = (sum(x for x, _ in pts) / len(pts), sum(y for _, y in pts) / len(pts)) if pts else (None, None)
+            else:
+                tt, cx, cy = None, None, None
+            ks = [k for k in kills if t0 < k["ts"] <= t1 and ({k["killer"], k["victim"], *k["assists"]} & set(members))]
+            out.append({"from": a["time"], "to": b["time"], "ts0": t0, "ts1": t1, "located": located,
+                        "atEst": mmss(tt) if tt is not None else None,
+                        "x": round(cx) if cx is not None else None, "y": round(cy) if cy is not None else None,
+                        "landmark": landmark(cx, cy) if (sr and cx is not None) else "",
+                        "players": [{"pid": m, "team": P[m]["team"], "champion": P[m]["champion"], "dmg": dmg.get(m, 0)}
+                                    for m in sorted(members, key=lambda m: -dmg.get(m, 0))],
+                        "kills": [k["time"] + " " + k["victimLabel"] for k in ks], "estimated": True})
+            if t0 >= GANK_UNTIL:
+                continue
+            for jg in [m for m in active if P[m].get("role") == "JUNGLE"]:
+                team = P[jg]["team"]
+                kj = [k for k in ks if jg in (k["killer"], k["victim"], *k["assists"])]
+                enemies = [m for m in members if P[m]["team"] != team and P[m].get("role") not in ("JUNGLE", None, "")]
+                lane = None
+                if located and jg in best:
+                    x, y = where[jg][best[jg][1]]
+                    z = zone_rel(x, y, team)
+                    lane = z if z in ("top", "mid", "bot") else None
+                    if lane is None and z == "river" and enemies:
+                        lane = {"TOP": "top", "MIDDLE": "mid", "BOTTOM": "bot", "UTILITY": "bot"}.get(P[enemies[0]]["role"])
+                    if lane is None:
+                        continue      # luta na jungle (invasão/contra-jungle), não gank
+                ganks.append({"from": a["time"], "to": b["time"], "ts0": t0, "ts1": t1, "jungler": jg, "team": team,
+                              "champion": P[jg]["champion"], "lane": lane or "?", "located": lane is not None,
+                              "dmg": dmg[jg], "enemies": [P[m]["champion"] for m in enemies],
+                              "kills": [k["time"] + " " + k["victimLabel"] for k in kj],
+                              "junglerDied": any(k["victim"] == jg for k in kj), "estimated": True})
+    return out, ganks
 
 
 # ============================================================================ impressão
@@ -535,6 +678,16 @@ def print_summary(s: dict, focus_who: str | None = None) -> None:
               f'(incluindo proximidade estimada {ag["objParticipationIncludingNearEst"]})')
         rec = [r for r in s["events"]["recalls"] if r["pid"] == focus["pid"]]
         print("  Voltas à base: " + "; ".join(f'{r["time"]} {r["kind"]}' for r in rec))
+        gk = [g for g in s["events"].get("ganks") or [] if g["jungler"] == focus["pid"]]
+        if gk:
+            print("  Ganks até 15:00 (estimado, pelo dano a campeões): " + "; ".join(
+                f'{g["from"]} {g["lane"]} ({"abate" if g["kills"] else "sem abate"})' for g in gk))
+        pg = focus.get("pings") or {}
+        if pg:
+            top3 = sorted(((v, k) for k, v in pg.items() if v), reverse=True)[:3]
+            print(f"  Pings na partida: {sum(pg.values())}" + (" (" + ", ".join(f"{PING_PT[k]} {v}" for v, k in top3) + ")" if top3 else ""))
+        if focus.get("casts"):
+            print("  Feitiços na partida: " + ", ".join(f'{x["name"]} {x["casts"]}' for x in focus["casts"]["summoners"]))
         w = s["events"]["wards"]
         print(f'  Wards: {w["totalsPerPlayer"][str(focus["pid"])]} ({w["note"]})')
         if w["events"]:

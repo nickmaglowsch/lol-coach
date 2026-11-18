@@ -24,6 +24,7 @@ from pathlib import Path
 from common import ROOT, STATIC, mmss, parse_time, resolve_player
 from landmarks import LANDMARKS
 from positions import from_summary
+import extras as ex
 import report_parts as rp
 from report_parts import TIME_RE, VERDICTS, mk
 from summarize import ROLE_PT, get_summary
@@ -670,6 +671,10 @@ def html_body(c: Ctx, data: dict) -> str:
         out.append(f'''<section><div class="eyebrow">Jungle inimigo</div><h2>{E(ej["champion"])}: esta partida × o padrão do campeão</h2>
 <div class="fig"><div class="scroll"><table class="tbl"><thead><tr><th></th><th>nesta partida</th><th>no elo ({ej["games"]} partidas)</th></tr></thead>
 <tbody>{body}</tbody></table></div><p class="cap">{E(EJ_CAP.format(**ej))}</p></div></section>''')
+    if sp.get("ganks", True) is not False:
+        out.append(ex.ganks_html(ex.gank_rows(s, c.who), c.side, E))
+    if sp.get("totals", True) is not False:
+        out.append(ex.totals_html(ex.totals_rows(s, c.focus, c.opp), c.alias, c.who(c.opp["pid"]) if c.opp else None, E))
     out += rp.sections(sp)
     out.append(rp.recs(sp, "Para a próxima"))
     lim = LIMITS_SHORT + (["Recalls e roles foram inferidos; dados do histórico do cliente, sem eventos de ward ou de compra."]
@@ -727,6 +732,10 @@ def md_report(c: Ctx) -> str:
         L += [f'## Jungle inimigo: {ej["champion"]} nesta partida × padrão do campeão', "",
               f'| | nesta partida | no elo ({ej["games"]} partidas) |', "|---|---|---|"]
         L += [f"| {a} | {b} | {d} |" for a, b, d in ej["rows"]] + ["", EJ_CAP.format(**ej), ""]
+    if sp.get("ganks", True) is not False:
+        L += ex.ganks_md(ex.gank_rows(s, c.who))
+    if sp.get("totals", True) is not False:
+        L += ex.totals_md(ex.totals_rows(s, c.focus, c.opp), c.alias, c.who(c.opp["pid"]) if c.opp else None)
     L += rp.md_tail(sp, s["limitations"] + sp.get("limitations", []), "Limitações desta análise")
     return "\n".join(L)
 

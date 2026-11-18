@@ -12,7 +12,7 @@ cmd="${1:-help}"; shift || true
 case "$cmd" in
   list|fetch|fetch-many|static|icons) exec "$PY" "$ROOT/tools/fetch.py" "$cmd" "$@" ;;
   summarize|sum)                exec "$PY" "$ROOT/tools/summarize.py" "$@" ;;
-  find|frames|events|at|series|players|games|lanes|paths|timers|decisions|fights|swings) exec "$PY" "$ROOT/tools/query.py" "$cmd" "$@" ;;
+  find|frames|events|at|series|players|games|lanes|paths|timers|decisions|fights|swings|ganks|skirmishes|totals) exec "$PY" "$ROOT/tools/query.py" "$cmd" "$@" ;;
   dashboard|painel)             exec "$PY" "$ROOT/tools/dashboard.py" "$@" ;;
   vision)                       exec "$PY" "$ROOT/tools/vision.py" "$@" ;;
   calibrate)                    exec "$PY" "$ROOT/tools/calibrate.py" "$@" ;;

@@ -402,6 +402,52 @@ def cmd_swings(a, out: Out) -> None:
         out.row(w)
 
 
+def cmd_ganks(a, out: Out) -> None:
+    """Ganks até 15:00 (estimados pelo dano a campeões por minuto; só Match-V5)."""
+    from extras import gank_rows
+    s = load(a.gid)
+    only = {p["pid"] for p in players_of(s, a.player)} if a.player else None
+    rows = gank_rows(s, until_ts=a.until * 60000)
+    if not rows and not s["events"].get("ganks") and s["source"] == "lcu":
+        print("[aviso] partida só com dados do cliente (LCU): sem dano por minuto. Baixe a Match-V5: "
+              f"lol fetch {s['gameId']} --source riot", file=sys.stderr)
+    for r in rows:
+        if only and r["pid"] not in only:
+            continue
+        out.row({"window": r["janela"], "jungler": r["quem"], "team": r["team"], "lane": r["lane"], "dmgToChamps": r["dano"],
+                 "enemiesNearEst": r["inimigos"], "result": r["resultado"]})
+
+
+def cmd_skirmishes(a, out: Out) -> None:
+    """Todas as trocas/lutas por minuto (estimadas pelo dano a campeões), com ou sem abate."""
+    s = load(a.gid)
+    only = {p["pid"] for p in players_of(s, a.player)} if a.player else None
+    for k in s["events"].get("skirmishes") or []:
+        if only and not only & {x["pid"] for x in k["players"]}:
+            continue
+        out.row({"window": f'{k["from"]}-{k["to"]}', "atEst": k.get("atEst") or "", "where": k["landmark"] or "sem local",
+                 "players": ", ".join(f'{x["champion"]}:{x["dmg"]}' for x in k["players"] if x["dmg"]),
+                 "nearNoDamage": ", ".join(x["champion"] for x in k["players"] if not x["dmg"]),
+                 "kills": "; ".join(k["kills"]) or "nenhum"})
+
+
+def cmd_totals(a, out: Out) -> None:
+    """Totais da partida pela API oficial: pings, feitiços, habilidades e estatísticas da Riot (sem horário)."""
+    from summarize import CHALLENGES_PT, PING_PT
+    s = load(a.gid)
+    for p in players_of(s, a.player):
+        pg, cs, ch = p.get("pings") or {}, p.get("casts") or {}, p.get("challenges") or {}
+        row = {"pid": p["pid"], "champion": p["champion"], "role": ROLE_PT.get(p.get("role", ""), "?"),
+               "pings": sum(pg.values()) if pg else "",
+               "pingsTop": ", ".join(f"{PING_PT[k]} {v}" for k, v in sorted(pg.items(), key=lambda kv: -kv[1])[:3] if v),
+               "summoners": ", ".join(f'{x["name"]} {x["casts"]}' for x in cs.get("summoners", [])),
+               "QWER": " ".join(f"{k}{cs[k]}" for k in ("Q", "W", "E", "R") if cs.get(k) is not None)}
+        for k in CHALLENGES_PT:
+            v = ch.get(k)
+            row[k] = round(v, 2) if isinstance(v, float) else ("" if v is None else v)
+        out.row(row)
+
+
 def cmd_timers(a, out: Out) -> None:
     from decisions import infer_timers
     for k, v in sorted(infer_timers(all_summaries()).items(), key=lambda kv: kv[1]["first"]):
@@ -462,6 +508,10 @@ def main() -> None:
     sp.add_argument("--gap", type=int, default=20); sp.add_argument("--min", type=int, default=3)
     sp = sub.add_parser("swings", parents=[common]); sp.add_argument("gid"); sp.add_argument("-p", "--player", action="append")
     sp.add_argument("--window", type=int, default=3); sp.add_argument("--top", type=int, default=5)
+    sp = sub.add_parser("ganks", parents=[common]); sp.add_argument("gid"); sp.add_argument("-p", "--player", action="append")
+    sp.add_argument("--until", type=int, default=15, help="minuto limite (padrão 15)")
+    sp = sub.add_parser("skirmishes", parents=[common]); sp.add_argument("gid"); sp.add_argument("-p", "--player", action="append")
+    sp = sub.add_parser("totals", parents=[common]); sp.add_argument("gid"); sp.add_argument("-p", "--player", action="append")
     sp = sub.add_parser("decisions", parents=[common]); sp.add_argument("gid"); sp.add_argument("-p", "--player", action="append")
     sp.add_argument("--kind", help="lane,travessia,objetivo,ausente,recall,morte")
     for name in ("frames", "events", "series", "at"):
@@ -482,7 +532,8 @@ def main() -> None:
     try:
         {"players": cmd_players, "find": cmd_find, "frames": cmd_frames, "events": cmd_events,
          "at": cmd_at, "series": cmd_series, "games": cmd_games, "lanes": cmd_lanes, "paths": cmd_paths,
-         "timers": cmd_timers, "decisions": cmd_decisions, "fights": cmd_fights, "swings": cmd_swings}[a.cmd](a, out)
+         "timers": cmd_timers, "decisions": cmd_decisions, "fights": cmd_fights, "swings": cmd_swings,
+         "ganks": cmd_ganks, "skirmishes": cmd_skirmishes, "totals": cmd_totals}[a.cmd](a, out)
     except BrokenPipeError:  # ex.: | head
         sys.stderr.close()
 
