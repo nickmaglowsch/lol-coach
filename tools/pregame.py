@@ -107,6 +107,7 @@ def parse_team(parts: list[str] | str, champs: dict[int, str]) -> list[tuple[str
 
 # ============================================================================ dados coletados
 def load_samples() -> list[dict]:
+    import winprob  # noqa: F401  (sem data/winprob, copia a base do repositório: dataset/winprob/)
     p = WP / "samples.jsonl"
     if not p.exists():
         return []
