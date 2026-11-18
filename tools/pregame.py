@@ -4,6 +4,11 @@
                                                   jogo aberto (Live Client Data, porta 2999) > carregamento
                                                   (/lol-gameflow/v1/session) > seleção de campeões (/lol-champ-select/v1/session)
   lol pregame --wait [--timeout 900]            espera ter os 10 campeões (de qualquer fonte) e imprime uma vez
+  lol pregame --listen [--scout]                fica ouvindo o cliente e começa assim que o carregamento tiver os dois
+                                                  times (ignora a seleção de campeões); com --scout, levanta os jogadores
+  lol pregame --scout [--scout-budget 45]       scout pelo cliente (só no carregamento ou com o jogo aberto): o começo de
+                                                  jogo do jungler inimigo nas últimas partidas de jungle dele, e elo,
+                                                  maestria e partidas recentes de cada jogador (tools/scout.py)
   lol pregame --source selecao|carregamento|jogo  força uma fonte (para testar)
   lol pregame --ally "top=Darius,jungle=Cho'Gath,mid=Ahri,bot=Jinx,sup=Thresh" --enemy "Shaco,Akali,Yorick,Tristana,Lulu"
               [--side blue|red] [--me "Cho'Gath"] [--json]
@@ -245,7 +250,7 @@ def side_shares(d: dict) -> tuple[float, float]:
 
 
 def plan(ally: dict[str, int], enemy: dict[str, int], team: int | None, me_role: str, champs: dict[int, str],
-         history: bool = True) -> dict:
+         history: bool = True, scout: dict | None = None) -> dict:
     samples = load_samples()
     roles, strength = role_stats(samples)
     pats = {}
@@ -279,21 +284,42 @@ def plan(ally: dict[str, int], enemy: dict[str, int], team: int | None, me_role:
 
     # ---------------- jungle inimigo
     ej_side, ej_info = None, None
-    if pat:
-        ft = pat["firstTakedown"]
-        t3, b3 = side_shares(pat["byMinute"].get("3", {}).get("side", {}))
-        tf, bf = side_shares(ft.get("side", {}))
+    # padrão pessoal do jungler inimigo (scout pelo cliente): entra quando há pelo menos 3 partidas de jungle dele,
+    # com peso n/(n+5) contra o padrão do campeão no elo (3 partidas: 0,38; 8: 0,62); sem padrão do elo, vale sozinho
+    sj = (scout or {}).get("jungler") or {}
+    ppat = sj.get("pattern") if (sj.get("analyzed") or 0) >= 3 and sj.get("cid") == ej_cid else None
+
+    def shares(pt):
+        ft_ = pt["firstTakedown"]
+        t3, b3 = side_shares(pt["byMinute"].get("3", {}).get("side", {}))
+        tf, bf = side_shares(ft_.get("side", {}))
         # lado em que ele aparece no primeiro abate pesa mais (é onde ele ganka); minuto 3 confirma
-        top_p, bot_p = 0.6 * tf + 0.4 * t3, 0.6 * bf + 0.4 * b3
+        return 0.6 * tf + 0.4 * t3, 0.6 * bf + 0.4 * b3
+
+    if pat or ppat:
+        top_p, bot_p, w = 0.0, 0.0, 0.0
+        if pat:
+            top_p, bot_p = shares(pat)
+        if ppat:
+            n_p = sj["analyzed"]
+            w = n_p / (n_p + 5) if pat else 1.0
+            tp, bp = shares(ppat)
+            top_p, bot_p = (1 - w) * top_p + w * tp, (1 - w) * bot_p + w * bp
         if top_p - bot_p >= SIDE_GAP:
             ej_side = "top"
         elif bot_p - top_p >= SIDE_GAP:
             ej_side = "bot"
-        ej_info = {"champion": ej_name, "games": pat["games"], "startCamp": pat["startCamp"],
-                   "minute3Side": pat["byMinute"].get("3", {}).get("side", {}),
-                   "firstTakedown": ft, "diesBefore10": pat["firstDeathBefore10"],
-                   "firstObjective": pat["firstTeamObjective"], "likelySide": ej_side,
-                   "sideScore": {"top": round(top_p, 2), "bot": round(bot_p, 2)}}
+        base_pat = pat or ppat
+        ft = (ppat or pat)["firstTakedown"] if ppat and w >= 0.5 else base_pat["firstTakedown"]
+        ej_info = {"champion": ej_name, "games": pat["games"] if pat else 0, "startCamp": base_pat["startCamp"],
+                   "minute3Side": base_pat["byMinute"].get("3", {}).get("side", {}),
+                   "firstTakedown": ft, "diesBefore10": base_pat["firstDeathBefore10"],
+                   "firstObjective": base_pat["firstTeamObjective"], "likelySide": ej_side,
+                   "sideScore": {"top": round(top_p, 2), "bot": round(bot_p, 2)},
+                   "personal": ({"games": sj["analyzed"], "jungleGames": sj["jungleGames"], "recentSR": sj["recentSR"],
+                                 "withChamp": sj["withChamp"], "weight": round(w, 2), "startCamp": ppat["startCamp"],
+                                 "minute3Side": ppat["byMinute"].get("3", {}).get("side", {}),
+                                 "firstTakedown": ppat["firstTakedown"]} if ppat else None)}
         out["enemyJungle"] = ej_info
 
     # ---------------- recomendação (só faz sentido para quem joga de jungle)
@@ -301,12 +327,15 @@ def plan(ally: dict[str, int], enemy: dict[str, int], team: int | None, me_role:
     strong = "top" if edge_top - edge_bot >= CALL else "bot" if edge_bot - edge_top >= CALL else None
     R = out["reasons"]
     rec = None
-    if ej_side and pat:
+    if ej_side and ej_info:
         other = "bot" if ej_side == "top" else "top"
-        ft = pat["firstTakedown"]
+        ft = ej_info["firstTakedown"]
         when = ft.get("medianTime") or "?"
+        pe = ej_info.get("personal")
+        src = " + ".join(x for x in (f"{pat['games']} partidas no elo" if pat else "",
+                                     f"as últimas {pe['games']} de jungle deste jogador" if pe else "") if x)
         R.append(f"{ej_name} costuma aparecer primeiro no lado {ej_side} ({round(100 * ej_info['sideScore'][ej_side])}% "
-                 f"× {round(100 * ej_info['sideScore'][other])}%; {pat['games']} partidas no elo), primeiro abate "
+                 f"× {round(100 * ej_info['sideScore'][other])}%; {src}), primeiro abate "
                  f"com mediana {when}")
         if lanes[ej_side]["edge"] >= CALL or strong == ej_side:
             rec = ej_side
@@ -316,7 +345,8 @@ def plan(ally: dict[str, int], enemy: dict[str, int], team: int | None, me_role:
             rec = other
             R.append(f"o lado {ej_side} não é o seu melhor começo (saldo estimado aos 10:00: {fmt(lanes[ej_side]['edge'])}): "
                      f"avise essa lane para jogar seguro até ~{when} e troque do lado {other}")
-        out["confidence"] = "média" if pat["games"] >= 30 else "baixa"
+        pe = ej_info.get("personal")
+        out["confidence"] = "média" if (pat and pat["games"] >= 30) or (pe and pe["games"] >= 5) else "baixa"
     elif strong:
         rec = strong
         weak = "bot" if strong == "top" else "top"
@@ -353,6 +383,12 @@ def plan(ally: dict[str, int], enemy: dict[str, int], team: int | None, me_role:
                  f"do time inimigo até 10:00: {top(pat['firstTeamObjective'], 3)}")
     elif ej_name:
         E.append(f"{ej_name}: sem amostra no jungle (menos de 5 partidas coletadas): sem padrão para esperar")
+    pe = (ej_info or {}).get("personal")
+    if pe:
+        pft = pe["firstTakedown"]
+        E.append(f"{ej_name} (este jogador, últimas {pe['games']} de jungle): começa em {top(pe['startCamp'], 2)}; no minuto 3 "
+                 f"está em {top(pe['minute3Side'], 2)}; 1º abate com mediana {pft.get('medianTime') or '-'}, lado "
+                 f"{top(pft.get('side', {}), 2) or '-'}")
     for side in ("top", "mid", "bot"):
         L = lanes[side]
         if not L["ally"] or not L["enemy"]:
@@ -400,6 +436,16 @@ def print_plan(p: dict) -> None:
     print("\nO que esperar (tendências estimadas, não certeza):")
     for e in p["expect"]:
         print(f"   - {e}")
+    sc = p.get("scout")
+    if sc:
+        print(f"\nScout dos jogadores (últimas ~20 partidas de cada um pelo cliente; amostra pequena; {sc['elapsed']} s"
+              + (", parcial" if sc.get("partial") else "") + "):")
+        for line in sc.get("junglerLines") or []:
+            print(f"   - {line}")
+        for x in sc["players"]:
+            print(f"   - {x['line']}")
+    elif p.get("scoutNote"):
+        print(f"\nScout: {p['scoutNote']}")
     h = p["history"]
     if p.get("forPlayer"):
         print(f"\nSem histórico: a partida é de {p['forPlayer']}, e o cache só tem as suas partidas.")
@@ -483,9 +529,20 @@ def page(p: dict, alias: str) -> str:
                  (side_txt, "lado provável" if side else "sem lado claro"),
                  (pct(ej["diesBefore10"]), "morre antes de 10:00")]
         kv = "".join(f"<div><b>{H(v)}</b><span>{H(k)}</span></div>" for v, k in cells)
+        pe = ej.get("personal")
+        srcs = " + ".join(x for x in (f'{ej["games"]} partidas no elo' if ej["games"] else "",
+                                      f'últimas {pe["games"]} de jungle do jogador' if pe else "") if x)
+        extra = ""
+        if pe:
+            pft = pe["firstTakedown"]
+            extra = (f'<p><b>Este jogador</b> (últimas {pe["games"]} de jungle; jungle em {pe["jungleGames"]} das últimas '
+                     f'{pe["recentSR"]}, {pe["withChamp"]} com {H(ej["champion"])}): começa em {H(top(pe["startCamp"], 2))}; '
+                     f'no minuto 3 está em {H(top(pe["minute3Side"], 2))}; 1º abate com mediana '
+                     f'{H(pft.get("medianTime") or "—")}, lado {H(top(pft.get("side", {}), 2) or "—")}.</p>')
         B.append(f'<section><div class="eyebrow">Jungle inimigo</div><h2>{H(ej["champion"])} '
-                 f'<span class="sub">· {ej["games"]} partidas no elo</span></h2><div class="kv">{kv}</div>'
-                 f'<p class="sub">Começa em {H(top(ej["startCamp"], 2))}. Primeiro objetivo do time inimigo até 10:00: '
+                 f'<span class="sub">· {H(srcs)}</span></h2><div class="kv">{kv}</div>{extra}'
+                 f'<p class="sub">{"No elo: começa" if pe else "Começa"} em {H(top(ej["startCamp"], 2))}. '
+                 'Primeiro objetivo do time inimigo até 10:00: '
                  f'{H(top(ej["firstObjective"], 3))}.</p></section>')
     elif p["enemy"].get("JUNGLE"):
         B.append(f'<section><div class="eyebrow">Jungle inimigo</div><h2>{H(p["enemy"]["JUNGLE"])}</h2>'
@@ -505,6 +562,21 @@ def page(p: dict, alias: str) -> str:
     if rows:
         B.append('<section><div class="eyebrow">Lanes</div><h2>Saldo estimado do time aos 10:00</h2>'
                  f'<div class="lanes">{"".join(rows)}</div></section>')
+
+    sc = p.get("scout")
+    if sc and sc["players"]:
+        items = []
+        for x in sc["players"]:
+            cls = "enemy" if x["side"] == "enemy" else "ally"
+            al = "".join(f'<span class="tag">{H(a)}</span>' for a in x["alerts"])
+            short = {"TOP": "top", "JUNGLE": "jg", "MIDDLE": "mid", "BOTTOM": "adc", "UTILITY": "sup"}
+            items.append(f'<li><span class="eyebrow">{H(short.get(x["role"], "?"))}</span>'
+                         f'<span class="who"><span class="{cls}">{H(x["champion"])}</span> '
+                         f'<span class="sub">{H(x["facts"])}</span>{al}</span></li>')
+        note = " Parcial: faltou tempo para o histórico de alguns jogadores." if sc.get("partial") else ""
+        B.append('<section><div class="eyebrow">Scout dos jogadores</div><h2>Quem está na partida</h2>'
+                 f'<ul class="scout">{"".join(items)}</ul><p class="sub">Últimas ~20 partidas de cada jogador pelo '
+                 f'cliente (amostra pequena), elo da fila e maestria.{note}</p></section>')
 
     def roster(d, conf=None):
         return "<ul>" + "".join(f'<li><span>{ROLE_PT[r]}</span>{H(d[r])}{"?" if conf and conf.get(r, 1) < 0.6 else ""}</li>'
@@ -727,6 +799,101 @@ def read_current(source: str, champs: dict[int, str]) -> dict:
     return {"ready": False, "why": f"o cliente não está na seleção nem numa partida (fase: {phase})"}
 
 
+def _live_identities(lcu: LCU, champs: dict[int, str]) -> dict[int, dict]:
+    """Plano B quando a sessão do gameflow não traz o outro time: Riot IDs do jogo aberto (Live Client Data) ->
+    puuid pelo cliente (/lol-summoner/v1/alias/lookup). Só com o jogo aberto."""
+    try:
+        d = live_client_get("allgamedata") or {}
+    except LiveClientError:
+        return {}
+    alias_to_id = {}
+    pc = DATA / "static" / "champions.json"
+    if pc.exists():
+        alias_to_id = {_norm(c.get("alias") or ""): int(c["id"]) for c in load_json(pc) if 0 < int(c["id"]) < 10000}
+    out = {}
+    for pl in d.get("allPlayers") or []:
+        if pl.get("isBot"):
+            continue
+        raw = str(pl.get("rawChampionName") or "").rsplit("_", 1)[-1]
+        cid = alias_to_id.get(_norm(raw))
+        if cid is None:
+            try:
+                cid = champ_id(pl.get("championName") or "", champs)
+            except SystemExit:
+                continue
+        gn, tl = pl.get("riotIdGameName"), pl.get("riotIdTagLine")
+        if not (gn and tl):
+            continue
+        try:
+            r = lcu.get("/lol-summoner/v1/alias/lookup", {"gameName": gn, "tagLine": tl}) or {}
+        except LCUError:
+            continue
+        if r.get("puuid"):
+            out[cid] = {"puuid": r["puuid"], "team": {"ORDER": 100, "CHAOS": 200}.get(pl.get("team"))}
+    return out
+
+
+def run_scout(ally: dict[int, str], enemy: dict[int, str], me_cid: int | None, champs: dict[int, str],
+              budget: float, source: str) -> tuple[dict | None, str | None]:
+    """Scout pelo cliente. Precisa dos puuids da sessão do gameflow (carregamento ou jogo aberto)."""
+    if str(source).startswith("seleção") or source == "campeões informados":
+        return None, "só no carregamento ou com o jogo aberto (na seleção a Riot esconde os nomes do outro time)"
+    import scout as sc_mod
+    try:
+        lcu = LCU()
+        ids = sc_mod.identities(lcu)
+        q = ((lcu.get("/lol-gameflow/v1/session") or {}).get("gameData") or {}).get("queue") or {}
+    except LCUError as e:
+        return None, f"cliente indisponível ({e})"
+    if not any(c in ids for c in enemy):
+        ids.update(_live_identities(lcu, champs))
+    players = []
+    for side, d in (("enemy", enemy), ("ally", ally)):
+        for cid, role in d.items():
+            who = ids.get(cid)
+            if who:
+                players.append({"cid": cid, "side": side, "role": role, "puuid": who["puuid"], "me": cid == me_cid})
+    if not any(x["side"] == "enemy" for x in players):
+        return None, "a sessão do cliente não trouxe os jogadores do outro time"
+    log = lambda m: print(m, file=sys.stderr)
+    return sc_mod.scout(players, q.get("id"), champs, budget=budget, log=log), None
+
+
+def scout_view(sc: dict, ally: dict[int, str], enemy: dict[int, str], champs: dict[int, str]) -> dict:
+    """Resultado do scout pronto para terminal e página (por campeão; sem nomes)."""
+    import scout as sc_mod
+    j = sc.get("jungler")
+    out = {"elapsed": sc["elapsed"], "partial": sc["partial"], "players": [],
+           "junglerLines": sc_mod.jungler_lines(j, champs.get(j["cid"], "?")) if j else []}
+    order = [("enemy", r) for r in ROLES] + [("ally", r) for r in ROLES]
+    by = {(pf["side"], pf.get("role")): (cid, pf) for cid, pf in sc["players"].items()}
+    for key in order:
+        if key not in by:
+            continue
+        cid, pf = by[key]
+        rk = pf.get("rank")
+        ms = pf.get("mastery") or {}
+        facts = []
+        if rk:
+            # o cliente não mostra as derrotas dos outros jogadores (vem 0): sem winrate
+            facts.append(f'{rk["label"]} {rk["lp"]} PdL' + (" (provisório)" if rk.get("provisional") else ""))
+        else:
+            facts.append("sem elo na fila")
+        if pf.get("recentSR") is not None:
+            facts.append(f'{pf["champGames"]} de {pf["recentSR"]} recentes com o campeão')
+        pts = ms.get("points") or 0
+        if pf.get("mastery") is not None:
+            facts.append(f'maestria {pts // 1000} mil' if pts >= 1000 else f'maestria {pts} pontos')
+        txt = " · ".join(facts)
+        side_pt = "inimigo" if pf["side"] == "enemy" else "aliado"
+        line = f'{champs.get(cid, "?")} ({ROLE_PT.get(pf.get("role"), "?")} {side_pt}): {txt}'
+        if pf["alerts"]:
+            line += " · ALERTA: " + "; ".join(pf["alerts"])
+        out["players"].append({"champion": champs.get(cid, "?"), "side": pf["side"], "role": pf.get("role"),
+                               "facts": txt, "alerts": pf["alerts"], "line": line})
+    return out
+
+
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -740,6 +907,11 @@ def main() -> None:
     ap.add_argument("--source", choices=["auto", "selecao", "carregamento", "jogo"], default="auto",
                     help="de onde ler o jogo atual (padrão: a melhor disponível)")
     ap.add_argument("--wait", action="store_true", help="espera ter os 10 campeões")
+    ap.add_argument("--listen", action="store_true",
+                    help="espera o carregamento (ou o jogo aberto) ter os dois times; ignora a seleção de campeões")
+    ap.add_argument("--scout", action="store_true",
+                    help="scout dos jogadores pelo cliente (carregamento ou jogo aberto): jungler inimigo primeiro")
+    ap.add_argument("--scout-budget", type=float, default=45.0, help="tempo máximo do scout, em segundos")
     ap.add_argument("--timeout", type=int, default=900)
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--html", nargs="?", const=str(REPORTS / "pregame.html"), metavar="ARQUIVO",
@@ -767,8 +939,21 @@ def main() -> None:
                 raise SystemExit(f"--me {a.me}: esse campeão não está em --ally.")
     else:
         t0 = time.time()
+        said = None
         while True:
             cur = read_current(a.source, champs)
+            loaded = cur["ready"] and not str(cur.get("source", "")).startswith("seleção")
+            if a.listen:
+                if loaded and cur["complete"]:
+                    break
+                why = cur.get("why") or ("seleção de campeões" if cur["ready"] else "esperando")
+                if why != said:
+                    print(f"[ouvindo] {why}; espero o carregamento", file=sys.stderr)
+                    said = why
+                if time.time() - t0 > a.timeout:
+                    raise SystemExit("Tempo esgotado esperando o carregamento.")
+                time.sleep(2)
+                continue
             if cur["ready"] and (cur["complete"] or not a.wait):
                 break
             if not a.wait:
@@ -792,9 +977,16 @@ def main() -> None:
     ally = assign_roles([c for _, c in ally_l], roles, {c: r for r, c in ally_l if r})
     enemy = assign_roles([c for _, c in enemy_l], roles, {c: r for r, c in enemy_l if r})
     me_role = ally.get(me_cid) if me_cid in ally else (main_role or "JUNGLE")
+    sc, note = None, None
+    if a.scout:
+        sc, note = run_scout(ally, enemy, me_cid, champs, a.scout_budget, source)
     p = plan({r: c for c, r in ally.items()}, {r: c for c, r in enemy.items()}, team, me_role, champs,
-             history=not a.for_player)
+             history=not a.for_player, scout=sc)
     p["source"] = source
+    if sc:
+        p["scout"] = scout_view(sc, ally, enemy, champs)
+    elif note:
+        p["scoutNote"] = note
     if a.for_player:
         p["forPlayer"] = a.for_player
         if a.html == str(REPORTS / "pregame.html"):   # cada pessoa tem a sua página (e o seu link)

@@ -267,6 +267,60 @@ def test_data(fixture: dict | None = None) -> None:
     page = (hp.parent / "amigo.html").read_text(encoding="utf-8") if (hp.parent / "amigo.html").exists() else ""
     check(r.returncode == 0 and "Pré-jogo · Amigo" in page and "Seu histórico" not in page and "Seu histórico" not in r.stdout,
           "lol pregame --for: pré-jogo de outra pessoa, sem o seu histórico")
+
+    # scout (tools/scout.py): o adaptador LCU -> Match-V5 tem que dar o mesmo começo de jogo do jungler que o crawl
+    import scout as sc_mod
+    from winprob import build_jungle_patterns, compact
+    from common import MATCHES, load_json
+    v5dir = next((d for d in sorted(MATCHES.iterdir()) if (d / "match_v5.json").exists() and (d / "timeline_v5.json").exists()), None)
+    if v5dir:
+        m5, t5 = load_json(v5dir / "match_v5.json"), load_json(v5dir / "timeline_v5.json")
+        lcu_game = {"gameId": m5["info"]["gameId"], "mapId": m5["info"]["mapId"], "queueId": m5["info"].get("queueId"),
+                    "gameDuration": m5["info"]["gameDuration"], "gameCreation": m5["info"].get("gameCreation"),
+                    "gameVersion": m5["info"].get("gameVersion"),
+                    "teams": [{"teamId": t["teamId"], "win": "Win" if t["win"] else "Fail"} for t in m5["info"]["teams"]],
+                    "participants": [{"participantId": q["participantId"], "teamId": q["teamId"], "championId": q["championId"],
+                                      "spell1Id": q.get("summoner1Id"), "spell2Id": q.get("summoner2Id")}
+                                     for q in m5["info"]["participants"]]}
+        a5 = compact(m5, t5, champs_all)
+        b5 = compact(*sc_mod._as_v5(lcu_game, {"frames": t5["info"]["frames"]}), champs_all)
+        same = bool(a5 and b5) and [(j["team"], j["pos"][:4], j["td"][:1]) for j in a5["jungle"]] == \
+            [(j["team"], j["pos"][:4], j["td"][:1]) for j in b5["jungle"]]
+        check(same, "scout: partida do cliente (formato v4) -> mesmo começo de jungle que o crawl")
+        if b5 and b5["jungle"]:
+            recs = [{**b5, "jungle": [{**b5["jungle"][0], "champ": [0, "*"]}]}] * 4
+            pat_p = build_jungle_patterns(recs)["champions"]["*"]
+            ej_cid = b5["jungle"][0]["champ"][0]
+            fake = {"jungler": {"cid": ej_cid, "analyzed": 4, "jungleGames": 6, "recentSR": 12, "withChamp": 3, "pattern": pat_p},
+                    "players": {}, "elapsed": 1.0, "partial": False}
+            en_t = b5["jungle"][0]["team"]
+            roles_of = lambda tm: {q.get("teamPosition") or f"X{q['participantId']}": q["championId"]
+                                   for q in m5["info"]["participants"] if q["teamId"] == tm}
+            ally_d, enemy_d = roles_of(300 - en_t), roles_of(en_t)
+            enemy_d["JUNGLE"] = ej_cid
+            for cid in list(ally_d.values())[:2] + list(enemy_d.values())[:2]:
+                side = "enemy" if cid in enemy_d.values() else "ally"
+                role = next(r for r, c in (enemy_d if side == "enemy" else ally_d).items() if c == cid)
+                fake["players"][cid] = {"side": side, "role": role, "rank": {"label": "Ouro II", "lp": 40, "provisional": False},
+                                        "mastery": {"points": 1500}, "recentSR": 12, "champGames": 0, "smiteGames": 0,
+                                        "streak": {"n": 4, "win": False}}
+                fake["players"][cid]["alerts"] = sc_mod.alerts(fake["players"][cid], role)
+            pp = pg.plan({r: c for r, c in ally_d.items() if r in pg.ROLES}, {r: c for r, c in enemy_d.items() if r in pg.ROLES},
+                         300 - en_t, "JUNGLE", champs_all, scout=fake)
+            pe = (pp.get("enemyJungle") or {}).get("personal")
+            check(bool(pe) and pe["games"] == 4 and 0 < pe["weight"] <= 1,
+                  "scout: padrão pessoal do jungler inimigo entra no plano (peso n/(n+5))")
+            pp["source"] = "teste"
+            pp["scout"] = pg.scout_view(fake, {c: r for r, c in ally_d.items()}, {c: r for r, c in enemy_d.items()}, champs_all)
+            html_s = pg.page(pp, "Teste")
+            check("Quem está na partida" in html_s and "Este jogador" in html_s and "primeira vez" in html_s
+                  and "4 derrotas seguidas" in html_s, "scout: seção da página (jungler pessoal + alertas)")
+    al = sc_mod.alerts({"mastery": {"points": 300000}, "recentSR": 10, "champGames": 9, "smiteGames": 0,
+                        "streak": {"n": 2, "win": True}}, "JUNGLE")
+    check(any("especialista" in x for x in al) and any("fora da role" in x for x in al),
+          "scout: alertas (especialista, fora da role)")
+    r = run_lol("pregame", "--listen", "--timeout", "2")
+    check(r.returncode != 0 and "carregamento" in (r.stderr + r.stdout), "lol pregame --listen: espera o carregamento (sem cliente, desiste no tempo)")
     shutil.rmtree(hp.parent, ignore_errors=True)
 
     import render as render_mod

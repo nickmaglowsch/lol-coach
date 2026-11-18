@@ -63,6 +63,7 @@ Modelos e calibração (precisam de partidas em cache; o crawl usa a Riot API):
 ./lol junglers --champ Shaco            # o que esse campeão costuma fazer nos primeiros minutos
 ./lol dashboard --ranked                # reports/painel.html: evolução com metas
 ./lol pregame --wait                    # na seleção de campeões: lado para começar e o que esperar do jungle inimigo
+./lol pregame --listen --scout --html   # espera o carregamento e faz o scout dos jogadores (jungler inimigo primeiro)
 ./lol pregame --ally "Ekko,Cho'Gath,Vladimir,Nilah,Ashe" --enemy "Shaco,Akali,Yorick,Tristana,Thresh" --side blue
 ```
 
