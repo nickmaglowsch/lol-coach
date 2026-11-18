@@ -218,6 +218,27 @@ def test_data(fixture: dict | None = None) -> None:
                 low = line.lower()
                 leak += (not str(r_["gameId"]).startswith("h")) or any(w in low for w in ("puuid", "riotid", "gamename", "summoner"))
         check(n_ds > 0 and leak == 0, f"dataset/winprob: {n_ds} partidas, sem gameId, PUUID ou nome")
+    # recorte por patch: padrões e força de lane usam os patches mais novos quando há amostra
+    from winprob import RECENT_MIN, build_jungle_patterns as bjp, patch_label, recent_patches
+    fake_g = []
+    for i in range(RECENT_MIN + 5):
+        for patch in ("16.1", "16.9", "16.10"):
+            fake_g.append({"patch": patch, "events": [], "jungle": [{"champ": [1, "Teste"], "team": 100, "win": True,
+                                                                     "pos": [[1000, 1000]] * 6, "jcs": [0] * 6, "td": [], "deaths": []}]})
+    pt = bjp(fake_g)["champions"]["Teste"]
+    check(recent_patches(fake_g) == {"16.9", "16.10"} and pt["patches"] == "16.9–16.10" and pt["games"] == 2 * (RECENT_MIN + 5)
+          and pt["gamesAllPatches"] == 3 * (RECENT_MIN + 5) and bjp(fake_g[:6])["champions"]["Teste"]["patches"] == "todos",
+          "padrões de jungle: patches mais novos quando há amostra (16.10 > 16.9), senão todos")
+    # limitador da Riot API: no máximo 18 por segundo (sem rede; só o relógio)
+    import time
+    from common import RiotAPI
+    RiotAPI._times.clear()
+    t_ = time.monotonic()
+    for _ in range(19):
+        RiotAPI._throttle()
+    el = time.monotonic() - t_
+    RiotAPI._times.clear()
+    check(0.9 <= el < 2.0, f"Riot API: limitador segura a 19ª chamada no mesmo segundo ({el:.2f} s)")
     # pré-jogo com os 10 campeões desta partida (sem cliente; roles dos inimigos inferidas)
     mine = next((p for p in s["participants"] if p.get("role") == "JUNGLE"), s["participants"][0])
     ally = ",".join(p["champion"] for p in s["participants"] if p["team"] == mine["team"])

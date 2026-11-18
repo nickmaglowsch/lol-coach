@@ -14,9 +14,11 @@ import os
 import ssl
 import string
 import sys
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import deque
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -143,13 +145,36 @@ KEY_FILE = ROOT / "riot_api_key.txt"   # alternativa à variável de ambiente; i
 class RiotAPI:
     """Cliente mínimo da API oficial (Match-V5).
     Chave: variável RIOT_API_KEY ou arquivo riot_api_key.txt na raiz do projeto (nunca impressa).
-    Respeita o limite da chave de desenvolvimento (20/s e 100 a cada 2 min) com espaçamento fixo
-    e repete quando recebe 429 (Retry-After)."""
+    Respeita o limite da chave de desenvolvimento/pessoal (20/s e 100 a cada 2 min) com janelas deslizantes
+    (até 18/s e 95 a cada 2 min, entre todas as threads do processo): rajadas curtas saem em segundos e um crawl
+    longo fica no mesmo ritmo de antes. Repete quando recebe 429 (Retry-After), por exemplo se outro processo
+    usou o limite."""
 
-    MIN_INTERVAL = 1.25  # s entre requisições -> ~96 a cada 2 min
-    _last = 0.0
+    LIMITS = ((18, 1.0), (95, 120.0))
+    _times: deque = deque()
+    _lock = threading.Lock()
 
-    def __init__(self, routing: str = "americas") -> None:
+    @classmethod
+    def _throttle(cls) -> None:
+        import time
+        while True:
+            with cls._lock:
+                now = time.monotonic()
+                while cls._times and now - cls._times[0] >= 120.0:
+                    cls._times.popleft()
+                wait = 0.0
+                for n, win in cls.LIMITS:
+                    recent = [t for t in cls._times if now - t < win]
+                    if len(recent) >= n:
+                        wait = max(wait, win - (now - recent[-n]))
+                if wait <= 0:
+                    cls._times.append(now)
+                    return
+            time.sleep(wait + 0.01)
+
+    def __init__(self, routing: str = "americas", patient: bool = True) -> None:
+        # patient=False: no 429 desiste na hora (o scout do pré-jogo não pode esperar o limite liberar)
+        self.patient = patient
         key = os.environ.get("RIOT_API_KEY", "").strip()
         if not key and KEY_FILE.exists():
             key = KEY_FILE.read_text(encoding="utf-8").strip()
@@ -171,15 +196,12 @@ class RiotAPI:
         req = urllib.request.Request(url, headers={"X-Riot-Token": self._key, "Accept": "application/json",
                                                    "User-Agent": "lol-coach/0.1"})
         for attempt in range(4):
-            wait = RiotAPI._last + self.MIN_INTERVAL - time.monotonic()
-            if wait > 0:
-                time.sleep(wait)
-            RiotAPI._last = time.monotonic()
+            self._throttle()
             try:
                 with urllib.request.urlopen(req, timeout=30) as r:
                     return json.loads(r.read())
             except urllib.error.HTTPError as e:
-                if e.code == 429 and attempt < 3:
+                if e.code == 429 and attempt < 3 and self.patient:
                     time.sleep(float(e.headers.get("Retry-After") or 10))
                     continue
                 hint = {401: " (chave ausente ou inválida)", 403: " (chave expirada ou sem permissão; gere outra)",

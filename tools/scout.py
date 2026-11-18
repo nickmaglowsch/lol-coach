@@ -11,6 +11,11 @@ Os puuids (do cliente) vêm de /lol-gameflow/v1/session, que existe no carregame
 Ordem (o mais útil primeiro, com limite de tempo): 1) o jungler inimigo, com o começo de jogo das últimas partidas
 dele de jungle (mesma extração do `winprob crawl`); 2) elo, maestria e partidas recentes dos inimigos; 3) dos aliados.
 
+Histórico profundo do jungler (com chave da Riot e sem o crawl rodando): pela Match-V5, as últimas ~20 ranqueadas
+de jungle dele (`type=ranked`, teamPosition JUNGLE), em vez das ~8 que cabem nas últimas 20 partidas do cliente.
+São ~40-60 chamadas, que saem em segundos com o limitador da RiotAPI. Com o crawl rodando (data/winprob/nightly.lock),
+os dois disputariam o mesmo limite: fica o caminho pelo cliente.
+
 Nada de nome, Riot ID ou PUUID é gravado: o resultado fica em memória e vai para a página/terminal pelo campeão.
 Tudo é amostra pequena de uma pessoa (≤ 20 partidas): mostre sempre o n.
 """
@@ -24,7 +29,9 @@ from common import LCU, LCUError, mmss
 
 SR_QUEUES = {400, 420, 430, 440, 490}   # Normal, Solo/Duo, Às cegas, Flex, Quickplay (Summoner's Rift)
 SMITE = 11
-JG_GAMES = 8                              # partidas de jungle do jungler inimigo analisadas (as mais recentes)
+JG_GAMES = 8                              # partidas de jungle do jungler inimigo analisadas pelo cliente
+JG_API_GAMES = 20                         # ... e pela Riot API (histórico profundo)
+JG_API_IDS = 60                           # ranqueadas olhadas, no máximo, para achar essas partidas de jungle
 QUEUE_TYPE = {420: "RANKED_SOLO_5x5", 440: "RANKED_FLEX_SR"}
 TIER_PT = {"IRON": "Ferro", "BRONZE": "Bronze", "SILVER": "Prata", "GOLD": "Ouro", "PLATINUM": "Platina",
            "EMERALD": "Esmeralda", "DIAMOND": "Diamante", "MASTER": "Mestre", "GRANDMASTER": "Grão-Mestre",
@@ -89,6 +96,83 @@ def jungle_record(lcu: LCU, row: dict, names: dict) -> dict | None:
     return rec if rec["jungle"] else None
 
 
+def crawl_running() -> bool:
+    """O `winprob nightly` está rodando (lock com menos de 6 h)?"""
+    try:
+        from winprob import WP
+    except ImportError:
+        return False
+    lock = WP / "nightly.lock"
+    return lock.exists() and time.time() - lock.stat().st_mtime < 6 * 3600
+
+
+def api_jungle_profile(lcu: LCU, puuid: str, cid: int, names: dict, deadline: float | None = None) -> dict | None:
+    """Últimas ~20 ranqueadas de jungle do jogador pela Riot API. None se não houver chave, se o crawl estiver
+    rodando ou se a API falhar (aí vale o caminho pelo cliente). O Riot ID só é usado em memória."""
+    from common import RiotAPI, RiotAPIError
+    from winprob import build_jungle_patterns, compact
+    if crawl_running():
+        return None
+    try:
+        api = RiotAPI(patient=False)
+    except RiotAPIError:
+        return None
+    try:
+        sm = lcu.get(f"/lol-summoner/v2/summoners/puuid/{puuid}") or {}
+        if not (sm.get("gameName") and sm.get("tagLine")):
+            return None
+        pu = api.account_by_riot_id(sm["gameName"], sm["tagLine"])["puuid"]
+        ids = api.get(api.routing, f"/lol/match/v5/matches/by-puuid/{pu}/ids",
+                      {"type": "ranked", "start": 0, "count": JG_API_IDS}) or []
+    except (LCUError, RiotAPIError):
+        return None
+
+    def get_match(mid):
+        try:
+            return api.match(mid)
+        except RiotAPIError:
+            return None
+
+    jg, seen_sr, with_champ = [], 0, 0
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        for i in range(0, len(ids), 10):                    # em lotes, até achar JG_API_GAMES de jungle
+            if len(jg) >= JG_API_GAMES or (deadline and time.monotonic() > deadline):
+                break
+            for mid, m in zip(ids[i:i + 10], ex.map(get_match, ids[i:i + 10])):
+                if len(jg) >= JG_API_GAMES:
+                    break
+                info = (m or {}).get("info") or {}
+                me = next((x for x in info.get("participants") or [] if x.get("puuid") == pu), None)
+                if not me or info.get("mapId") != 11 or (info.get("gameDuration") or 0) < 300:
+                    continue
+                seen_sr += 1
+                if me.get("teamPosition") == "JUNGLE":
+                    jg.append((mid, m, me["teamId"]))
+                    with_champ += me.get("championId") == cid
+
+        def get_tl(row):
+            try:
+                return api.timeline(row[0])
+            except RiotAPIError:
+                return None
+        tls = list(ex.map(get_tl, jg))
+    recs = []
+    for (mid, m, team), tl in zip(jg, tls):
+        if not tl:
+            continue
+        rec = compact(m, tl, names)
+        if rec:
+            rec["jungle"] = [j for j in rec["jungle"] if j["team"] == team]
+            if rec["jungle"]:
+                recs.append(rec)
+    out = {"source": "riot", "recentSR": seen_sr, "jungleGames": len(jg), "analyzed": len(recs),
+           "withChamp": with_champ}
+    if recs:
+        allc = [{**r, "jungle": [{**r["jungle"][0], "champ": [0, "*"]}]} for r in recs]
+        out["pattern"] = build_jungle_patterns(allc, recent=False)["champions"]["*"]
+    return out
+
+
 def ranked(lcu: LCU, puuid: str, queue: int | None) -> dict | None:
     r = lcu.get(f"/lol-ranked/v1/ranked-stats/{puuid}") or {}
     qm = r.get("queueMap") or {}
@@ -129,11 +213,11 @@ def jungler_profile(lcu: LCU, puuid: str, cid: int, names: dict, hist: list[dict
             continue
         if rec:
             recs.append(rec)
-    out = {"recentSR": len(sr), "jungleGames": len(jg), "analyzed": len(recs),
+    out = {"source": "cliente", "recentSR": len(sr), "jungleGames": len(jg), "analyzed": len(recs),
            "withChamp": sum(r["champ"] == cid for r in jg)}
     if recs:
         allc = [{**r, "jungle": [{**r["jungle"][0], "champ": [0, "*"]}]} for r in recs]
-        out["pattern"] = build_jungle_patterns(allc)["champions"]["*"]
+        out["pattern"] = build_jungle_patterns(allc, recent=False)["champions"]["*"]
     return out
 
 
@@ -201,14 +285,19 @@ def scout(players: list[dict], queue: int | None, names: dict, budget: float = 4
     hists = {}
 
     def jungler():
-        try:
-            hists[ej["cid"]] = history(lcu, ej["puuid"])
-            out["jungler"] = {"cid": ej["cid"], **jungler_profile(lcu, ej["puuid"], ej["cid"], names,
-                                                                   hists[ej["cid"]], deadline)}
-        except LCUError as e:
-            out["jungler"] = {"cid": ej["cid"], "error": str(e)}
+        deep = api_jungle_profile(lcu, ej["puuid"], ej["cid"], names, deadline)
+        if deep and deep.get("analyzed", 0) >= 3:
+            out["jungler"] = {"cid": ej["cid"], **deep}
+        else:
+            try:
+                hists[ej["cid"]] = history(lcu, ej["puuid"])
+                out["jungler"] = {"cid": ej["cid"], **jungler_profile(lcu, ej["puuid"], ej["cid"], names,
+                                                                       hists[ej["cid"]], deadline)}
+            except LCUError as e:
+                out["jungler"] = {"cid": ej["cid"], "error": str(e)}
         if log:
-            log(f"[scout] jungler inimigo em {time.monotonic() - t0:.1f} s")
+            log(f"[scout] jungler inimigo em {time.monotonic() - t0:.1f} s "
+                f"({out['jungler'].get('analyzed', 0)} partidas de jungle, fonte: {out['jungler'].get('source', '?')})")
 
     def quick():
         for p in rest:
@@ -248,7 +337,8 @@ def jungler_lines(j: dict, champ_name: str) -> list[str]:
     if not j or j.get("error"):
         return [f"{champ_name}: sem histórico do jogador ({(j or {}).get('error', 'não encontrado')})"]
     n = j.get("analyzed", 0)
-    head = (f"{champ_name} (o jogador): jungle em {j['jungleGames']} das últimas {j['recentSR']} no Summoner's Rift; "
+    pool = "ranqueadas (Riot API)" if j.get("source") == "riot" else "no Summoner's Rift (cliente)"
+    head = (f"{champ_name} (o jogador): jungle em {j['jungleGames']} das últimas {j['recentSR']} {pool}; "
             f"{j['withChamp']} delas com {champ_name}")
     if not n:
         return [head + "; nenhuma partida de jungle para analisar"]
