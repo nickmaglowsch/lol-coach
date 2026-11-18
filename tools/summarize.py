@@ -470,8 +470,8 @@ def summarize_game(gid: int) -> dict:
             "killParticipation": round(kp, 3) if kp is not None else None,
             "recallsInferred": sum(1 for r in recalls if r["pid"] == pid and r["kind"].startswith("recall")),
             "ganksEst": ({"total": sum(1 for g_ in ganks if g_["jungler"] == pid),
-                          "withKill": sum(1 for g_ in ganks if g_["jungler"] == pid and g_["kills"]),
-                          "noKill": sum(1 for g_ in ganks if g_["jungler"] == pid and not g_["kills"])}
+                          "withKill": sum(1 for g_ in ganks if g_["jungler"] == pid and g_["killsFor"]),
+                          "noKill": sum(1 for g_ in ganks if g_["jungler"] == pid and not g_["killsFor"])}
                          if p.get("role") == "JUNGLE" and ganks is not None else None),
         }
 
@@ -592,6 +592,8 @@ def find_skirmishes(per_minute: list, kills: list, positions, P: dict, sr: bool)
                               "champion": P[jg]["champion"], "lane": lane or "?", "located": lane is not None,
                               "dmg": dmg[jg], "enemies": [P[m]["champion"] for m in enemies],
                               "kills": [k["time"] + " " + k["victimLabel"] for k in kj],
+                              "killsFor": [k["time"] + " " + k["victimLabel"] for k in kj if k["victimTeam"] != team],
+                              "deathsOwn": [k["time"] + " " + k["victimLabel"] for k in kj if k["victimTeam"] == team],
                               "junglerDied": any(k["victim"] == jg for k in kj), "estimated": True})
     return out, ganks
 
@@ -681,7 +683,7 @@ def print_summary(s: dict, focus_who: str | None = None) -> None:
         gk = [g for g in s["events"].get("ganks") or [] if g["jungler"] == focus["pid"]]
         if gk:
             print("  Ganks até 15:00 (estimado, pelo dano a campeões): " + "; ".join(
-                f'{g["from"]} {g["lane"]} ({"abate" if g["kills"] else "sem abate"})' for g in gk))
+                f'{g["from"]} {g["lane"]} ({"abate" if g.get("killsFor", g["kills"]) else "sem abate"})' for g in gk))
         pg = focus.get("pings") or {}
         if pg:
             top3 = sorted(((v, k) for k, v in pg.items() if v), reverse=True)[:3]
