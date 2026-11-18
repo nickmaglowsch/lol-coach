@@ -6,6 +6,7 @@ Uso:
   python tools/winprob.py curve <gameId> [--team me|100|200] [--step 60]
   python tools/winprob.py state <gameId> <T> [--team me|100|200]
   python tools/winprob.py junglers [--champ Shaco] [--min-games 5] [--rebuild]
+  python tools/winprob.py nightly [--max 1000] [--mine 10] [--log data/winprob/nightly.log]
 
 Dados (data/winprob/, fora do git):
   samples.jsonl          uma linha por partida: gameId, fila, patch, campeões por role, totais por time
@@ -15,6 +16,8 @@ Dados (data/winprob/, fora do git):
   seen.txt               gameIds já processados (o crawl retoma daqui).
   model.json             pesos do modelo + métricas do teste.
   jungle_patterns.json   padrões dos junglers por campeão (minutos 1-5, primeira participação em abate).
+  model.prev.json        modelo anterior (o nightly volta para ele se o novo piorar).
+  nightly.log            registro da rotina noturna (agendador do Windows).
 
 Importável (para a revisão de decisões):
   from winprob import state_at, win_prob, win_curve, win_prob_at
@@ -37,10 +40,15 @@ Regras: só GET de leitura pela classe RiotAPI (chave nunca impressa); nada de n
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
+import io
 import json
 import math
+import os
 import random
+import shutil
+import subprocess
 import sys
 import time
 import zlib
@@ -444,15 +452,19 @@ def cmd_crawl(args) -> None:
     names = _champ_names()
     added_cache = 0
     seeds = []
+    # A Riot criptografa o PUUID por chave: só servem de semente as partidas baixadas com a chave atual
+    # (as que trazem o seu puuidApi de agora). As outras dariam HTTP 400 e gastariam o limite à toa.
+    me_file = DATA / "me.json"
+    cur = load_json(me_file).get("puuidApi") if me_file.exists() else None
     # 1) partidas já no cache local
     for d in sorted(MATCHES.iterdir()) if MATCHES.exists() else []:
         mp, tp = d / "match_v5.json", d / "timeline_v5.json"
         if not (d.name.isdigit() and mp.exists()):
             continue
         m = load_json(mp)
-        for p in m["info"]["participants"]:
-            if p.get("puuid"):
-                seeds.append(p["puuid"])
+        parts = m["info"]["participants"]
+        if not cur or any(p.get("puuid") == cur for p in parts):
+            seeds += [p["puuid"] for p in parts if p.get("puuid")]
         gid = int(d.name)
         if gid in seen or not tp.exists() or m["info"].get("queueId") not in queues:
             continue
@@ -462,7 +474,7 @@ def cmd_crawl(args) -> None:
             added_cache += 1
         _append(SEEN, str(gid))
         seen.add(gid)
-    log(f"[crawl] cache local: {added_cache} partidas novas adicionadas")
+    log(f"[crawl] cache local: {added_cache} partidas novas adicionadas; {len(set(seeds))} jogadores de semente")
     if args.max <= 0:
         return
     try:
@@ -893,6 +905,67 @@ def cmd_junglers(args) -> None:
         log(f"[aviso] amostra pequena ({v['games']} partidas)")
 
 
+# ============================================================================ rotina noturna
+def cmd_nightly(args) -> None:
+    """Rotina para o agendador (uma vez por noite): 1) baixa as suas partidas recentes pela Riot API, que servem
+    de semente com o PUUID da chave atual; 2) crawl de até --max partidas novas; 3) refaz os padrões de jungle;
+    4) retreina e só fica com o modelo novo se a log loss da validação cruzada não piorar mais que --tolerance
+    (senão volta para o anterior, guardado em model.prev.json). Não grava nomes nem PUUIDs (mesmas regras do crawl)."""
+    WP.mkdir(parents=True, exist_ok=True)
+    if args.log:  # agendador: tudo (stdout e stderr) vai para o arquivo, em UTF-8
+        fh = open(args.log, "a", encoding="utf-8", buffering=1)
+        sys.stdout = sys.stderr = fh
+    lock = WP / "nightly.lock"
+    if lock.exists() and time.time() - lock.stat().st_mtime < 6 * 3600:
+        log(f"[nightly] {dt.datetime.now():%Y-%m-%d %H:%M} outra execução em andamento ({lock.name}); saindo")
+        return
+    lock.write_text(str(os.getpid()), encoding="utf-8")
+    t0 = time.monotonic()
+    log(f"\n[nightly] início {dt.datetime.now():%Y-%m-%d %H:%M}")
+    try:
+        if args.mine > 0:
+            fetch = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fetch.py")
+            r = subprocess.run([sys.executable, fetch, "fetch-many", "--source", "riot", "--n", str(args.mine)],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace",
+                               env={**os.environ, "PYTHONUTF8": "1"})
+            if r.returncode == 0:
+                log(f"[nightly] suas partidas recentes: {len(r.stdout.split())} em cache")
+            else:
+                log(f"[nightly] fetch das suas partidas falhou (código {r.returncode}): "
+                    f"{(r.stderr.strip().splitlines() or ['?'])[-1]}")
+        before = len(load_samples())
+        try:
+            cmd_crawl(argparse.Namespace(max=args.max, queue=args.queue, per_player=10, depth=1))
+        except SystemExit as e:  # chave inválida/expirada: segue com o que já tem
+            log(f"[nightly] crawl interrompido: {e}")
+        games = load_samples()
+        log(f"[nightly] amostras: {before} -> {len(games)}")
+        if len(games) == before and MODEL.exists():
+            log("[nightly] nada novo; modelo e padrões mantidos")
+            return
+        pats = build_jungle_patterns(games)
+        save_json(JUNGLE, pats, indent=1)
+        big = sum(v["games"] >= 20 for v in pats["champions"].values())
+        log(f"[nightly] padrões de jungle: {len(pats['champions'])} campeões, {big} com 20+ partidas")
+        old = load_json(MODEL) if MODEL.exists() else None
+        if old:
+            shutil.copyfile(MODEL, WP / "model.prev.json")
+        with contextlib.redirect_stdout(io.StringIO()):
+            cmd_train(argparse.Namespace(holdout=0.2, l2=args.l2, cv=5, queue=""))
+        new = load_json(MODEL)
+        ll_old = ((old or {}).get("metricsCV") or {}).get("logLoss")
+        ll_new = (new.get("metricsCV") or {}).get("logLoss")
+        acc_new = (new.get("metricsCV") or {}).get("accuracy")
+        if ll_old is not None and ll_new is not None and ll_new > ll_old + args.tolerance:
+            shutil.copyfile(WP / "model.prev.json", MODEL)
+            log(f"[nightly] modelo novo pior (log loss {ll_new} × {ll_old}); voltei para o anterior")
+        else:
+            log(f"[nightly] modelo novo: {new['games']} partidas, log loss {ll_new} (antes {ll_old}), acurácia {acc_new}")
+    finally:
+        lock.unlink(missing_ok=True)
+        log(f"[nightly] fim em {(time.monotonic() - t0) / 60:.1f} min")
+
+
 # ============================================================================ main
 def main() -> None:
     ap = argparse.ArgumentParser(description="Chance de vitória por minuto e padrões de jungle.")
@@ -920,9 +993,16 @@ def main() -> None:
     c.add_argument("--min-games", type=int, default=5)
     c.add_argument("--rebuild", action="store_true")
     c.add_argument("--json", action="store_true")
+    c = sub.add_parser("nightly", help="rotina noturna: suas partidas + crawl + padrões + retreino com proteção")
+    c.add_argument("--max", type=int, default=1000, help="partidas novas do crawl por noite (~45 min para 1.000)")
+    c.add_argument("--mine", type=int, default=10, help="suas partidas recentes baixadas antes (sementes)")
+    c.add_argument("--queue", default="420,440")
+    c.add_argument("--l2", type=float, default=100.0)
+    c.add_argument("--tolerance", type=float, default=0.01, help="piora máxima aceita na log loss da validação cruzada")
+    c.add_argument("--log", help="arquivo para anexar a saída (o agendador usa data/winprob/nightly.log)")
     a = ap.parse_args()
     {"crawl": cmd_crawl, "train": cmd_train, "curve": cmd_curve, "state": cmd_state,
-     "junglers": cmd_junglers}[a.cmd](a)
+     "junglers": cmd_junglers, "nightly": cmd_nightly}[a.cmd](a)
 
 
 if __name__ == "__main__":
