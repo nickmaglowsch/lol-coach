@@ -346,7 +346,7 @@ def jungler_lines(j: dict, champ_name: str) -> list[str]:
     from winprob import _fmt_pct
     ft = pat["firstTakedown"]
     return [head,
-            f"nas últimas {n} de jungle dele: começa em {_fmt_pct(pat['startCamp'], 2)}; "
+            f"nas últimas {n} partidas de jungle: começa em {_fmt_pct(pat['startCamp'], 2)}; "
             f"no minuto 3 está em {_fmt_pct(pat['byMinute']['3']['side'], 2)}",
             f"1ª participação em abate: mediana {ft['medianTime'] or '-'}, antes de 4:00 em {ft['before4min'] * 100:.0f}%, "
             f"lado {_fmt_pct(ft['side'], 2) or '-'}"]
