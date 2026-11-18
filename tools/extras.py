@@ -34,15 +34,14 @@ def gank_rows(s: dict, name=None, until_ts: int = 900000) -> list[dict]:
     for g in (s["events"].get("ganks") or []):
         if g["ts0"] >= until_ts:
             continue
-        if g["kills"]:
-            res = "abate: " + _victims(g["kills"])
-        else:
-            res = "sem abate"
-        if g.get("junglerDied") and "abate" in res:
-            res += " (o jungler morreu)"
+        kf, do = g.get("killsFor"), g.get("deathsOwn")
+        if kf is None:            # resumo antigo, sem a separação
+            kf, do = g["kills"], []
+        parts = (["abate: " + _victims(kf)] if kf else []) + (["morte: " + _victims(do)] if do else [])
+        res = "; ".join(parts) or "sem abate"
         out.append({"janela": f'{g["from"]}–{g["to"]}', "pid": g["jungler"], "team": g["team"], "quem": name(g["jungler"]),
                     "lane": g["lane"] if g.get("located", True) and g["lane"] != "?" else "sem local",
-                    "dano": g["dmg"], "inimigos": ", ".join(g["enemies"]) or "—", "resultado": res, "abate": bool(g["kills"])})
+                    "dano": g["dmg"], "inimigos": ", ".join(g["enemies"]) or "—", "resultado": res, "abate": bool(kf)})
     return out
 
 
@@ -97,7 +96,7 @@ def ganks_html(rows: list[dict], side, E) -> str:
     body = "".join(f'<tr><td>{E(r["janela"])}</td><td class="{"ally" if side(r["team"]) == "a" else "enemy"}">{E(r["quem"])}</td>'
                    f'<td>{E(r["lane"])}</td><td>{r["dano"]}</td><td>{E(r["inimigos"])}</td><td>{E(r["resultado"])}</td></tr>'
                    for r in rows)
-    n_fail = sum(1 for r in rows if not r["abate"])
+    n_fail = sum(1 for r in rows if not r["abate"])   # sem abate do time do jungler
     return (f'<section><div class="eyebrow">Ganks e lutas sem abate</div><h2>Ganks até 15:00: {len(rows)} '
             f'({n_fail} sem abate)</h2><div class="fig"><div class="scroll"><table class="tbl"><thead><tr><th>minuto</th>'
             f'<th>jungler</th><th>lane</th><th>dano a campeões</th><th>inimigos perto (est.)</th><th>resultado</th></tr></thead>'
