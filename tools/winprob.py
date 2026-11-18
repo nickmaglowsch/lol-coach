@@ -862,17 +862,48 @@ def _camp(x, y, team) -> str:
     return f'{base} {"própria" if c["team"] == team else "inimiga"}'
 
 
+RECENT_PATCHES = 2      # padrões e força de lane usam só os 2 patches mais novos...
+RECENT_MIN = 20         # ...quando o campeão tem pelo menos 20 partidas neles; senão, todos os patches
+
+
+def _patch_key(p) -> tuple:
+    try:
+        return tuple(int(x) for x in str(p).split("."))
+    except ValueError:
+        return (0,)
+
+
+def recent_patches(games: list, k: int = RECENT_PATCHES) -> set:
+    """Os k patches mais novos que aparecem nas amostras (ex.: {"16.22", "16.23"})."""
+    ps = sorted({r.get("patch") for r in games if r.get("patch")}, key=_patch_key)
+    return set(ps[-k:])
+
+
+def patch_label(ps: set) -> str:
+    ps = sorted(ps, key=_patch_key)
+    return ps[0] if len(ps) == 1 else f"{ps[0]}–{ps[-1]}" if ps else "todos"
+
+
 def _pct(c: Counter, n: int) -> dict:
     return {k: round(v / n, 3) for k, v in c.most_common()}
 
 
-def build_jungle_patterns(games: list) -> dict:
+def build_jungle_patterns(games: list, recent: bool = True) -> dict:
+    """Padrão de começo de jogo por campeão. Com recent=True, usa só os patches mais novos quando o campeão tem
+    RECENT_MIN partidas neles (cada patch mexe nos campeões); senão, todos. O escopo vai em "patches"."""
     by = defaultdict(list)
     for r in games:
         for j in r.get("jungle", []):
             by[j["champ"][1]].append((r, j))
+    rp = recent_patches(games) if recent else set()
     out = {}
     for champ, lst in by.items():
+        n_all = len(lst)
+        scope = "todos"
+        if rp:
+            rl = [(r, j) for r, j in lst if r.get("patch") in rp]
+            if len(rl) >= RECENT_MIN:
+                lst, scope = rl, patch_label(rp)
         n = len(lst)
         mins = {}
         for mi in range(1, 6):
@@ -899,7 +930,8 @@ def build_jungle_patterns(games: list) -> dict:
             ob = next((e for e in r["events"] if e[1] in ("D", "G", "H") and e[2] == j["team"] and e[0] <= 600000), None)
             first_obj[{"D": "dragão", "G": "vastilarvas", "H": "arauto"}[ob[1]] if ob else "nenhum até 10:00"] += 1
         out[champ] = {
-            "games": n, "winRate": round(sum(j["win"] for r, j in lst) / n, 3),
+            "games": n, "gamesAllPatches": n_all, "patches": scope,
+            "winRate": round(sum(j["win"] for r, j in lst) / n, 3),
             "side": {"blue": sum(j["team"] == 100 for r, j in lst), "red": sum(j["team"] == 200 for r, j in lst)},
             "startCamp": _pct(start, n),
             "byMinute": mins,
@@ -915,6 +947,7 @@ def build_jungle_patterns(games: list) -> dict:
             "firstTeamObjective": _pct(first_obj, n),
         }
     return {"generatedAt": dt.datetime.now().isoformat(timespec="seconds"), "games": len(games),
+            "recentPatches": sorted(rp, key=_patch_key), "recentMin": RECENT_MIN,
             "notes": "Posições só a cada ~60 s (frame do minuto). side: top = metade do barão/vastilarvas "
                      "(y - x > 1200), bot = metade do dragão (y - x < -1200). Zonas relativas ao time do jungler. "
                      "Primeira participação = primeiro abate ou assistência do jungler até 10:00.",

@@ -115,9 +115,13 @@ def load_samples() -> list[dict]:
 
 
 def role_stats(samples: list[dict]) -> tuple[dict, dict]:
-    """(contagem campeão->role, força de início por (campeão, role))."""
+    """(contagem campeão->role, força de início por (campeão, role)). A força usa só os patches mais novos quando
+    o campeão tem partidas suficientes neles na role (winprob.RECENT_MIN); senão, todos os patches."""
+    from winprob import RECENT_MIN, patch_label, recent_patches
+    rp = recent_patches(samples)
     roles = defaultdict(Counter)
     acc = defaultdict(lambda: [0, 0.0, 0])   # n, soma ouro@10 do time (perspectiva do campeão), vitórias
+    acc_r = defaultdict(lambda: [0, 0.0, 0])  # o mesmo, só nos patches recentes
     for r in samples:
         fr = r.get("frames") or []
         g10 = None
@@ -128,14 +132,17 @@ def role_stats(samples: list[dict]) -> tuple[dict, dict]:
                 roles[cid][role] += 1
                 if g10 is None:
                     continue
-                a = acc[(cid, role)]
-                a[0] += 1
-                a[1] += g10 if t == "100" else -g10
-                a[2] += int(r["win"] == int(t))
+                for a in (acc[(cid, role)],) + ((acc_r[(cid, role)],) if r.get("patch") in rp else ()):
+                    a[0] += 1
+                    a[1] += g10 if t == "100" else -g10
+                    a[2] += int(r["win"] == int(t))
     strength = {}
-    for k, (n, s, w) in acc.items():
+    label = patch_label(rp)
+    for k, v in acc.items():
+        (n, s, w), scope = (acc_r[k], label) if acc_r.get(k, [0])[0] >= RECENT_MIN else (v, "todos")
         strength[k] = {"n": n, "gold10": round(s / (n + SHRINK)), "gold10Raw": round(s / n) if n else None,
-                       "winRate": round((w + SHRINK / 2) / (n + SHRINK), 3), "winRateRaw": round(w / n, 3) if n else None}
+                       "winRate": round((w + SHRINK / 2) / (n + SHRINK), 3), "winRateRaw": round(w / n, 3) if n else None,
+                       "patches": scope}
     return roles, strength
 
 
@@ -312,7 +319,8 @@ def plan(ally: dict[str, int], enemy: dict[str, int], team: int | None, me_role:
             ej_side = "bot"
         base_pat = pat or ppat
         ft = (ppat or pat)["firstTakedown"] if ppat and w >= 0.5 else base_pat["firstTakedown"]
-        ej_info = {"champion": ej_name, "games": pat["games"] if pat else 0, "startCamp": base_pat["startCamp"],
+        ej_info = {"champion": ej_name, "games": pat["games"] if pat else 0, "patches": (pat or {}).get("patches", "todos"),
+                   "startCamp": base_pat["startCamp"],
                    "minute3Side": base_pat["byMinute"].get("3", {}).get("side", {}),
                    "firstTakedown": ft, "diesBefore10": base_pat["firstDeathBefore10"],
                    "firstObjective": base_pat["firstTeamObjective"], "likelySide": ej_side,
@@ -333,7 +341,8 @@ def plan(ally: dict[str, int], enemy: dict[str, int], team: int | None, me_role:
         ft = ej_info["firstTakedown"]
         when = ft.get("medianTime") or "?"
         pe = ej_info.get("personal")
-        src = " + ".join(x for x in (f"{pat['games']} partidas no elo" if pat else "",
+        scope = f", patches {pat['patches']}" if pat and pat.get("patches", "todos") != "todos" else ""
+        src = " + ".join(x for x in (f"{pat['games']} partidas no elo{scope}" if pat else "",
                                      f"as últimas {pe['games']} de jungle deste jogador" if pe else "") if x)
         R.append(f"{ej_name} costuma aparecer primeiro no lado {ej_side} ({round(100 * ej_info['sideScore'][ej_side])}% "
                  f"× {round(100 * ej_info['sideScore'][other])}%; {src}), primeiro abate "
@@ -531,7 +540,8 @@ def page(p: dict, alias: str) -> str:
                  (pct(ej["diesBefore10"]), "morre antes de 10:00")]
         kv = "".join(f"<div><b>{H(v)}</b><span>{H(k)}</span></div>" for v, k in cells)
         pe = ej.get("personal")
-        srcs = " + ".join(x for x in (f'{ej["games"]} partidas no elo' if ej["games"] else "",
+        scope = f', patches {ej["patches"]}' if ej.get("patches", "todos") != "todos" else ""
+        srcs = " + ".join(x for x in (f'{ej["games"]} partidas no elo{scope}' if ej["games"] else "",
                                       f'últimas {pe["games"]} de jungle do jogador' if pe else "") if x)
         extra = ""
         if pe:
@@ -846,7 +856,10 @@ def run_scout(ally: dict[int, str], enemy: dict[int, str], me_cid: int | None, c
         q = ((lcu.get("/lol-gameflow/v1/session") or {}).get("gameData") or {}).get("queue") or {}
     except LCUError as e:
         return None, f"cliente indisponível ({e})"
-    if not any(c in ids for c in enemy):
+    n_enemy = sum(c in ids for c in enemy)
+    print(f"[scout] sessão do cliente: {sum(c in ids for c in ally)}/{len(ally)} aliados e {n_enemy}/{len(enemy)} "
+          f"inimigos com puuid (fila {q.get('id')})", file=sys.stderr)
+    if not n_enemy:
         ids.update(_live_identities(lcu, champs))
     players = []
     for side, d in (("enemy", enemy), ("ally", ally)):
