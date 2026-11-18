@@ -43,6 +43,8 @@ Filosofia Unix: cada comando faz uma coisa; dados no **stdout** (TSV com cabeça
 | `lol swings <id> [--window 3] [--top 5]` | Maiores viradas do ouro do time (janelas sem sobreposição), com abates e objetivos de cada janela. |
 | `lol fights <id> [--gap 20] [--min 3]` | Lutas = abates em sequência (≤ gap s entre um e outro): horário, placar, local, objetivos em volta. |
 | `lol timers` | Horários dos objetivos inferidos do histórico: primeiro abate mais cedo (nasce até) e menor intervalo entre abates (renasce em), inclusive ancião depois da alma. |
+| `lol ganks <id> [-p P] [--until 15]` / `lol skirmishes <id> [-p P]` | Ganks até 15:00 e trocas/lutas por minuto, **com e sem abate**, estimadas pelo dano a campeões em cada minuto (só Match-V5) e pelas posições interpoladas a cada 10 s: quem causou ≥120 de dano no minuto se liga aos inimigos que passaram a ≤3000 dele (o alvo pode não ter revidado). "sem local" = houve dano mas as posições estimadas não põem ninguém perto. Um gank sem dano (o laner só recuou) não aparece. Entram sozinhos no relatório (`"ganks": false` desliga). |
+| `lol totals <id> [-p P]` | Totais da partida pela API oficial, **certos e sem horário**: pings por tipo, usos de Flash/Smite e de Q/W/E/R e uma seleção das estatísticas da Riot (`challenges`: abates solo, skillshots, aronguejos, CS de jungle até 10 min, vantagem de visão…). Entram no relatório como "Totais da partida: foco × oponente" (`"totals": false` desliga). |
 | `lol decisions <id> [-p P] [--kind lane,travessia,objetivo,ausente,recall,morte] [--json]` | Revisão de decisões: cada vez que o jogador foi para uma lane, atravessou o mapa, fez/perdeu objetivo, deu recall ou morreu, com o estado na hora (vida, mana, ouro no bolso, nível, lane de destino, jungle inimigo, objetivos vivos/nascendo), os sinais, o resultado na janela seguinte e um veredito boa/ruim/neutra **pelo resultado**. |
 | `lol vision <id> \| --all` | Visão antes de cada objetivo épico (wards colocadas/destruídas por time nos 90 s antes; só Match-V5) e, com `--all`, a taxa de objetivos pegos com mais × menos visão. Entra sozinho no relatório (`"vision": false` desliga). |
 | `lol calibrate <signals\|games\|epics\|score\|thresholds\|all [--write]>` | Calibra a revisão de decisões com o histórico em cache: sinais com × sem (placar da janela com IC95), quanto vale cada objetivo épico em ouro (pela chance de vitória), cortes boa/ruim. `all --write` grava `data/calibration.json`, que `decisions.py` lê (sem o arquivo valem as constantes calibradas em 2026-11-11). |
@@ -66,7 +68,7 @@ Exemplos de composição:
 ./lol at <gameId> 15:31 --ref 12006,1562                                          # quem estava perto de um ponto
 ```
 
-Módulos: `common.py` (clientes LCU/Riot, helpers, `resolve_player`), `zones.py` (zonas), `landmarks.py` (torres/inibidores com coordenadas exatas tiradas dos eventos; campos aproximados), `positions.py` (posição estimada em qualquer instante usando frames + locais de kill como âncoras, sabendo quem está morto), `decisions.py` (detecção e avaliação de decisões + horários dos objetivos inferidos; constantes calibradas + `data/calibration.json`), `calibrate.py` (calibração da revisão de decisões), `winprob.py` (modelo de chance de vitória + padrões de jungle por campeão), `vision.py` (visão antes dos objetivos), `dashboard.py` + `templates/dashboard.html` (painel de evolução), `summarize.py` (com cache dos resumos em memória por processo; trate o dict como somente leitura), `query.py`, `render.py` (uma partida) + `render_multi.py` (várias partidas), `report_parts.py` (blocos de HTML/Markdown comuns aos dois renders: cards, vereditos, seções, recomendações, limitações), `selftest.py`, `templates/report.html`.
+Módulos: `common.py` (clientes LCU/Riot, helpers, `resolve_player`), `zones.py` (zonas), `landmarks.py` (torres/inibidores com coordenadas exatas tiradas dos eventos; campos aproximados), `positions.py` (posição estimada em qualquer instante usando frames + locais de kill como âncoras e, na Match-V5, quem pegou épico/torre/placa e quem comprou item (= estava na base), sabendo quem está morto), `extras.py` (ganks/lutas sem abate e totais da API oficial no relatório e nas consultas), `decisions.py` (detecção e avaliação de decisões + horários dos objetivos inferidos; constantes calibradas + `data/calibration.json`), `calibrate.py` (calibração da revisão de decisões), `winprob.py` (modelo de chance de vitória + padrões de jungle por campeão), `vision.py` (visão antes dos objetivos), `dashboard.py` + `templates/dashboard.html` (painel de evolução), `summarize.py` (com cache dos resumos em memória por processo; trate o dict como somente leitura), `query.py`, `render.py` (uma partida) + `render_multi.py` (várias partidas), `report_parts.py` (blocos de HTML/Markdown comuns aos dois renders: cards, vereditos, seções, recomendações, limitações), `selftest.py`, `templates/report.html`.
 
 ### O que cada endpoint retornou de fato (testado em 2026-11-11, cliente patch 16.22, conta BR1)
 **LCU (API local do cliente)** — `https://127.0.0.1:<porta>`, Basic Auth `riot:<senha do lockfile>`;
@@ -96,11 +98,11 @@ lockfile em `C:\Riot Games\League of Legends\lockfile` (`nome:pid:porta:senha:pr
 - Use a Riot API quando: precisar de mais de 20 partidas, de wards/itens por evento, ou o cliente estiver fechado.
 
 ### Resumo (`data/summaries/<gameId>.json`)
-- `participants[]`: pid, time, campeão, riotId, `role` + `roleSource` + `roleConfidence`, `laneOpponent`, `stats`, `aggregates` (tempo por zona, minutos/zonas das mortes, CS/ouro/XP e diffs @10/@15, participação em objetivos certa e estimada, KP, recalls inferidos).
-- `perMinute[]`: por frame (minuto i; último = fim) e para os 10 jogadores: zona, x/y, ouro, ouro no bolso, XP, CS, nível, **vida e mana em % (só Match-V5)** e `goldDiff/xpDiff/csDiff` vs oponente direto; totais por time e `teamDiff100` (azul − vermelho).
+- `participants[]`: pid, time, campeão, riotId, `role` + `roleSource` + `roleConfidence`, `laneOpponent`, `stats`, `aggregates` (tempo por zona, minutos/zonas das mortes, CS/ouro/XP e diffs @10/@15, participação em objetivos certa e estimada, KP, recalls, `ganksEst` do jungler). Só Match-V5: `pings` (por tipo), `casts` (Q/W/E/R e feitiços de invocador) e `challenges` (seleção das estatísticas da Riot), todos totais da partida.
+- `perMinute[]`: por frame (minuto i; último = fim) e para os 10 jogadores: zona, x/y, ouro, ouro no bolso, XP, CS, nível, **vida e mana em % e dano a campeões acumulado `dmgChamps` (só Match-V5)** e `goldDiff/xpDiff/csDiff` vs oponente direto; totais por time e `teamDiff100` (azul − vermelho).
 - `events.kills[]`: tempo, matador, vítima, assistências, posição, zona (relativa à vítima), aliados da vítima/inimigos extras perto (**estimado**).
 - `events.objectives[]`: dragões (tipo), vastilarvas, arauto, barão, torres, inibidores (e placas se Match-V5) com time, participantes certos e `nearbyEst` (≤2500 unidades, **estimado**).
-- `events.wards`: eventos (só Match-V5) + totais por jogador. `events.purchases`: itens (Match-V5) ou ouro gasto por minuto (LCU, `estimated: true`). `events.recalls`: voltas à base **inferidas**.
+- `events.wards`: eventos (só Match-V5) + totais por jogador. `events.purchases`: itens (Match-V5) ou ouro gasto por minuto (LCU, `estimated: true`). `events.recalls`: voltas à base (Match-V5: **confirmadas pela compra**, porque só dá para comprar na base; LCU: **inferidas**). Só Match-V5: `events.skirmishes`/`events.ganks` (lutas e ganks por minuto pelo dano a campeões, **estimados**) e `events.anchors` (âncoras de posição tiradas dos eventos).
 - `limitations`: o que os dados não cobrem nesta partida.
 
 ### Zonas (tools/zones.py)
@@ -114,9 +116,9 @@ Validação (17 partidas SR em cache, 2026-11-11): torres outer/inner na lane ce
 - Diferencie dado **certo** (evento com killer/assist) de **estimado** (`nearbyEst`, `alliesOfVictimNearEst`, recalls inferidos, roles inferidas com `roleConfidence` < 0.6), **chance de vitória** (modelo do `lol winprob`: acerta ~71% dos minutos na validação cruzada, ~61% até 10:00) e padrão do jungle inimigo (tendência do campeão no elo, não intenção do jogador).
 - **Limitações a declarar sempre** no relatório:
   - posição só a cada 60s;
-  - ganks que falharam sem kill não geram evento;
-  - Flash e feitiços de invocador não aparecem;
-  - pings, calls e voz não estão nos dados;
+  - ganks e lutas sem abate: só **estimados** pelo dano a campeões por minuto (Match-V5); um gank sem dano não aparece, e na fonte LCU nada disso existe;
+  - Flash, habilidades e pings: só o **total** na partida (Match-V5), sem horário;
+  - calls e voz não estão nos dados;
   - não inventar intenção ("ele quis…", "ele não ouviu…").
   - Com fonte LCU: sem eventos de ward/itens (só totais e estimativas).
 

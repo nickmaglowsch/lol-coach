@@ -11,6 +11,7 @@ Coach de League of Legends baseado nos **dados da timeline** das suas partidas, 
 - **Consultas encadeáveis** (filosofia Unix, TSV ou JSON Lines): `find`, `frames`, `events`, `at`, `series`, `where`.
 - **Relatório** gerado a partir de um "spec" com o julgamento da análise. Os números sempre vêm dos dados.
 - **Revisão de decisões** momento a momento (foi para a lane, atravessou o mapa, objetivo, recall, morte): estado na hora, sinais, resultado e veredito, com cortes e pesos **calibrados no seu histórico** (`lol calibrate`) e a **chance de vitória** antes → depois de um modelo treinado em partidas do seu elo (`lol winprob`).
+- **Ganks e lutas sem abate** (`lol ganks`, `lol skirmishes`), estimados pelo dano a campeões em cada minuto, e **totais da partida** (`lol totals`: pings, Flash, habilidades, estatísticas da Riot), pela API oficial.
 - **Visão antes dos objetivos** (`lol vision`), **padrão do jungle inimigo** por campeão (`lol junglers`) e **painel de evolução** com metas (`lol dashboard`).
 - **Página visual**: resumo em cards, gráfico de ouro, vereditos, replay com retratos dos campeões no minimapa, torres caindo no horário real, waves de minions (simulação, com checkbox), linha do tempo clicável, mapas das lutas e timing de objetivos.
 - **Pré-jogo** (`lol pregame`): na seleção ou no carregamento, diz em que lado estar de jungle por volta de 3:15 (e por onde começar o clear para chegar lá) e o que esperar do jungle inimigo, com uma página curta para ler no celular. No carregamento faz o **scout dos jogadores** pelo cliente: o começo de jogo do jungler inimigo nas últimas partidas dele, além de elo, maestria e alertas de cada um (primeira vez com o campeão, fora da role, sequência de derrotas).
@@ -140,7 +141,7 @@ A base é anônima: cada partida tem só números por minuto (ouro, XP, CS, obje
 
 ## Limitações
 
-Os dados da timeline registram a posição de cada jogador **uma vez por minuto** (vida e mana também, e só pela API oficial). Ficam de fora: ganks sem kill, Flash e outros feitiços, pings e voz. Pela API local também não há wards nem compras por evento. Cada relatório declara isso. Posições entre os minutos, recalls e roles são **estimados** e aparecem marcados como tal.
+Os dados da timeline registram a posição de cada jogador **uma vez por minuto**. Pela API oficial, entram também a vida, a mana e o dano a campeões em cada minuto, e daí saem os **ganks e lutas sem abate**, marcados como estimados (um gank em que ninguém causou dano continua invisível). Flash, habilidades e pings vêm só como **total da partida**, sem horário; calls e voz ficam de fora. Pela API local não há nada disso, nem wards ou compras por evento. Cada relatório declara isso. Posições entre os minutos, recalls e roles são **estimados** e aparecem marcados como tal.
 
 ## Licença
 

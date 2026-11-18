@@ -537,6 +537,12 @@ class Game:
                 "item4": inv[4], "item5": inv[5], "item6": 3340, "timePlayed": duration,
                 "totalTimeSpentDead": int(s["deadTime"]), "win": team_of(p) == winner,
                 "gameEndedInSurrender": False, "gameEndedInEarlySurrender": False,
+                "dangerPings": p % 4, "onMyWayPings": 2 + p % 5, "enemyMissingPings": p % 3, "retreatPings": p % 2,
+                "spell1Casts": 60 + 7 * p, "spell2Casts": 40 + 3 * p, "spell3Casts": 30 + 2 * p, "spell4Casts": 8 + p % 4,
+                "summoner1Casts": 3 + p % 3, "summoner2Casts": 4 + p % 6,
+                "challenges": {"soloKills": s["k"] // 3, "takedownsFirstXMinutes": min(s["k"] + s["a"], 6),
+                               "skillshotsHit": 20 + p, "skillshotsDodged": 10 + p, "teamDamagePercentage": 0.2,
+                               "damagePerMinute": round(s["dmg"] / max(1, duration / 60), 1)},
             })
 
         def count(team: int, pred) -> int:
