@@ -205,6 +205,19 @@ def test_data(fixture: dict | None = None) -> None:
     if (DATA / "winprob" / "jungle_patterns.json").exists():
         r = run_lol("winprob", "junglers", "--min-games", "5")
         check(r.returncode == 0 and r.stdout.strip() != "", "lol junglers")
+    # base versionada (dataset/winprob/): anônima e recarregável
+    from common import ROOT
+    ds = ROOT / "dataset" / "winprob" / "samples.jsonl.gz"
+    if ds.exists():
+        import gzip
+        n_ds, leak = 0, 0
+        with gzip.open(ds, "rt", encoding="utf-8") as f:
+            for line in f:
+                n_ds += 1
+                r_ = json.loads(line)
+                low = line.lower()
+                leak += (not str(r_["gameId"]).startswith("h")) or any(w in low for w in ("puuid", "riotid", "gamename", "summoner"))
+        check(n_ds > 0 and leak == 0, f"dataset/winprob: {n_ds} partidas, sem gameId, PUUID ou nome")
     # pré-jogo com os 10 campeões desta partida (sem cliente; roles dos inimigos inferidas)
     mine = next((p for p in s["participants"] if p.get("role") == "JUNGLE"), s["participants"][0])
     ally = ",".join(p["champion"] for p in s["participants"] if p["team"] == mine["team"])

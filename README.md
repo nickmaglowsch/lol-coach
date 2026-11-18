@@ -59,6 +59,7 @@ Modelos e calibração (precisam de partidas em cache; o crawl usa a Riot API):
 ./lol winprob crawl --max 1000          # baixa ranqueadas do mesmo elo (só features, sem nomes) para data/winprob/
 ./lol winprob train                     # treina o modelo de chance de vitória
 ./lol winprob nightly --log data/winprob/nightly.log   # rotina noturna: suas partidas + crawl + padrões + retreino (volta ao modelo anterior se piorar)
+./lol winprob export                    # atualiza a base anonimizada versionada em dataset/winprob/
 ./lol winprob curve <gameId>            # chance de vitória minuto a minuto
 ./lol junglers --champ Shaco            # o que esse campeão costuma fazer nos primeiros minutos
 ./lol dashboard --ranked                # reports/painel.html: evolução com metas
@@ -95,9 +96,15 @@ Sem esse arquivo, o render desenha um mapa vetorial no lugar.
 
 Os retratos dos campeões são baixados do **seu** cliente pelo `./lol icons` (o `fetch` já faz isso) e ficam em `data/static/champion-icons/`.
 
+## Base de partidas (já vem no repositório)
+
+`dataset/winprob/` traz as partidas ranqueadas do BR1 que o `lol winprob crawl` já coletou (veja `meta.json`), além do modelo de chance de vitória e dos padrões de jungle por campeão. Na primeira vez que o `winprob` roda sem amostras em `data/winprob/`, a base é copiada para lá sozinha. A partir daí, o pré-jogo, a chance de vitória e os padrões de jungle funcionam sem precisar de chave da Riot. Com uma chave, o `crawl` continua de onde a base parou, sem repetir partidas.
+
+A base é anônima: cada partida tem só números por minuto (ouro, XP, CS, objetivos, posição dos junglers) e os campeões. Não há nomes, Riot IDs, PUUIDs nem o id da partida, que foi trocado por um hash. `LOL_NO_DATASET=1` desliga a cópia automática.
+
 ## Privacidade
 
-- `data/` (partidas, PUUIDs, nicks) e `reports/` (suas análises) estão no `.gitignore`.
+- `data/` (partidas, PUUIDs, nicks) e `reports/` (suas análises) estão no `.gitignore`. A base pública em `dataset/` é anonimizada (veja acima).
 - A senha do lockfile e a `RIOT_API_KEY` nunca são impressas nem gravadas. A API local é usada só para leitura (GET).
 - Preferências pessoais para o Claude (sua conta, apelidos de amigos) vão em `CLAUDE.local.md`, que também fica fora do git.
 

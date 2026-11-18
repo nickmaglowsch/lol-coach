@@ -1,0 +1,236 @@
+{
+ "version": 1,
+ "createdAt": "2026-11-18T11:11:05",
+ "features": [
+  "bias",
+  "m",
+  "gold",
+  "gold_m",
+  "xp",
+  "xp_m",
+  "cs",
+  "kills",
+  "towers",
+  "towers_m",
+  "inhibs",
+  "inhibsDown",
+  "plates",
+  "dragons",
+  "soul",
+  "elderActive",
+  "baronActive",
+  "barons",
+  "heralds",
+  "grubs",
+  "atakhan"
+ ],
+ "weights": [
+  0.099303,
+  0.105825,
+  0.486741,
+  -0.232011,
+  0.112836,
+  -0.065374,
+  -0.003396,
+  -0.105298,
+  -0.117893,
+  0.063205,
+  -0.024711,
+  0.270429,
+  0.012767,
+  0.257975,
+  0.132822,
+  0.13084,
+  0.149672,
+  -0.149794,
+  -0.03538,
+  0.00316,
+  0.285291
+ ],
+ "weightsTrainSplit": [
+  0.086249,
+  0.059012,
+  0.501035,
+  -0.229629,
+  0.107169,
+  -0.060667,
+  -0.00264,
+  -0.080723,
+  -0.140578,
+  0.086609,
+  -0.020534,
+  0.231673,
+  0.007436,
+  0.276364,
+  0.101936,
+  0.069439,
+  0.105708,
+  -0.154782,
+  -0.068266,
+  0.015236,
+  0.18885
+ ],
+ "l2": 100.0,
+ "holdout": 0.2,
+ "queues": "todas",
+ "games": 2632,
+ "gamesTrain": 2108,
+ "gamesTest": 524,
+ "patches": {
+  "16.22": 1622,
+  "16.21": 391,
+  "16.20": 107,
+  "16.23": 90,
+  "16.19": 45,
+  "16.2": 38,
+  "16.17": 30,
+  "15.24": 24,
+  "16.18": 23,
+  "16.1": 23,
+  "16.12": 21,
+  "16.15": 21,
+  "16.10": 20,
+  "16.6": 19,
+  "16.4": 18,
+  "15.23": 16,
+  "16.16": 15,
+  "16.8": 15,
+  "16.11": 11,
+  "16.5": 11,
+  "15.22": 10,
+  "15.18": 9,
+  "16.13": 8,
+  "16.3": 7,
+  "15.16": 6,
+  "15.17": 6,
+  "16.9": 6,
+  "15.15": 4,
+  "15.19": 4,
+  "15.14": 3,
+  "16.7": 3,
+  "16.14": 3,
+  "15.21": 3
+ },
+ "blueWinRate": 0.5323,
+ "metricsTest": {
+  "rows": 15784,
+  "logLoss": 0.5649,
+  "baselineLogLoss": 0.6862,
+  "accuracy": 0.6929,
+  "brier": 0.1936,
+  "calibration": [
+   {
+    "bin": "0-10%",
+    "n": 1082,
+    "predMean": 0.051,
+    "observed": 0.087
+   },
+   {
+    "bin": "10-20%",
+    "n": 1084,
+    "predMean": 0.15,
+    "observed": 0.209
+   },
+   {
+    "bin": "20-30%",
+    "n": 1155,
+    "predMean": 0.251,
+    "observed": 0.328
+   },
+   {
+    "bin": "30-40%",
+    "n": 1439,
+    "predMean": 0.353,
+    "observed": 0.402
+   },
+   {
+    "bin": "40-50%",
+    "n": 2029,
+    "predMean": 0.452,
+    "observed": 0.521
+   },
+   {
+    "bin": "50-60%",
+    "n": 2972,
+    "predMean": 0.543,
+    "observed": 0.582
+   },
+   {
+    "bin": "60-70%",
+    "n": 1855,
+    "predMean": 0.646,
+    "observed": 0.675
+   },
+   {
+    "bin": "70-80%",
+    "n": 1445,
+    "predMean": 0.748,
+    "observed": 0.752
+   },
+   {
+    "bin": "80-90%",
+    "n": 1352,
+    "predMean": 0.85,
+    "observed": 0.822
+   },
+   {
+    "bin": "90-100%",
+    "n": 1371,
+    "predMean": 0.95,
+    "observed": 0.95
+   }
+  ],
+  "byMinute": [
+   {
+    "minutes": "01-10",
+    "n": 5232,
+    "accuracy": 0.602,
+    "logLoss": 0.6595
+   },
+   {
+    "minutes": "11-15",
+    "n": 2586,
+    "accuracy": 0.708,
+    "logLoss": 0.5673
+   },
+   {
+    "minutes": "16-20",
+    "n": 2441,
+    "accuracy": 0.741,
+    "logLoss": 0.516
+   },
+   {
+    "minutes": "21-25",
+    "n": 2240,
+    "accuracy": 0.762,
+    "logLoss": 0.4872
+   },
+   {
+    "minutes": "26-30",
+    "n": 1729,
+    "accuracy": 0.752,
+    "logLoss": 0.4858
+   },
+   {
+    "minutes": "31+",
+    "n": 1556,
+    "accuracy": 0.731,
+    "logLoss": 0.5188
+   }
+  ]
+ },
+ "metricsCV": {
+  "folds": 5,
+  "rows": 77696,
+  "logLoss": 0.5389,
+  "accuracy": 0.7098,
+  "brier": 0.1837
+ },
+ "metricsTrain": {
+  "rows": 61912,
+  "logLoss": 0.5284,
+  "accuracy": 0.7167,
+  "brier": 0.1796
+ },
+ "notes": "Perspectiva do time 100 (azul); label = azul venceu. Linhas = frames de minuto (sem o 0 e sem o final). Split treino/teste por partida (crc32 do gameId). 'weights' = refeito com todas as partidas."
+}

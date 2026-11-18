@@ -7,6 +7,11 @@ Uso:
   python tools/winprob.py state <gameId> <T> [--team me|100|200]
   python tools/winprob.py junglers [--champ Shaco] [--min-games 5] [--rebuild]
   python tools/winprob.py nightly [--max 1000] [--mine 10] [--log data/winprob/nightly.log]
+  python tools/winprob.py export         grava a base anonimizada em dataset/winprob/ (vai para o git)
+
+Base no repositório (dataset/winprob/, versionada): samples.jsonl.gz (gameId trocado por um hash, sem seen.txt),
+model.json e jungle_patterns.json. Se data/winprob/ estiver sem amostras, ela é copiada para lá sozinha na primeira
+vez que o winprob é importado (LOL_NO_DATASET=1 desliga), e o crawl continua a partir dela sem repetir partidas.
 
 Dados (data/winprob/, fora do git):
   samples.jsonl          uma linha por partida: gameId, fila, patch, campeões por role, totais por time
@@ -42,6 +47,8 @@ from __future__ import annotations
 import argparse
 import contextlib
 import datetime as dt
+import gzip
+import hashlib
 import io
 import json
 import math
@@ -54,7 +61,7 @@ import time
 import zlib
 from collections import Counter, defaultdict, deque
 
-from common import DATA, MATCHES, STATIC, RiotAPI, RiotAPIError, load_json, mmss, parse_time, save_json
+from common import DATA, MATCHES, ROOT, STATIC, RiotAPI, RiotAPIError, load_json, mmss, parse_time, save_json
 from zones import zone_abs, zone_rel
 
 WP = DATA / "winprob"
@@ -62,6 +69,7 @@ SAMPLES = WP / "samples.jsonl"
 SEEN = WP / "seen.txt"
 MODEL = WP / "model.json"
 JUNGLE = WP / "jungle_patterns.json"
+DATASET = ROOT / "dataset" / "winprob"   # base anonimizada, versionada no git
 
 SAMPLE_VERSION = 1
 BARON_BUFF_MS = 180_000
@@ -449,6 +457,7 @@ def cmd_crawl(args) -> None:
     WP.mkdir(parents=True, exist_ok=True)
     queues = {int(q) for q in args.queue.split(",")}
     seen = _read_seen()
+    known = _sample_keys()   # ids das amostras (inclusive os anonimizados da base do repositório)
     names = _champ_names()
     added_cache = 0
     seeds = []
@@ -466,7 +475,7 @@ def cmd_crawl(args) -> None:
         if not cur or any(p.get("puuid") == cur for p in parts):
             seeds += [p["puuid"] for p in parts if p.get("puuid")]
         gid = int(d.name)
-        if gid in seen or not tp.exists() or m["info"].get("queueId") not in queues:
+        if gid in seen or anon_id(gid) in known or not tp.exists() or m["info"].get("queueId") not in queues:
             continue
         rec = compact(m, load_json(tp), names)
         if rec:
@@ -504,7 +513,7 @@ def cmd_crawl(args) -> None:
             if not mid.startswith("BR1_"):
                 continue
             gid = int(mid.split("_", 1)[1])
-            if gid in seen:
+            if gid in seen or anon_id(gid) in known:
                 continue
             try:
                 m = api.match(mid)
@@ -536,6 +545,62 @@ def cmd_crawl(args) -> None:
                 log(f"[crawl] {new}/{args.max} novas ({el / 60:.1f} min; ~{el / new * (args.max - new) / 60:.0f} min restantes;"
                     f" fila de jogadores {len(frontier)}; falhas {fails})")
     log(f"[crawl] fim: {new} partidas novas da API, {added_cache} do cache; falhas {fails}; total em seen.txt {len(seen)}")
+
+
+# ============================================================================ base do repositório
+def anon_id(gid) -> str:
+    """Id anônimo e estável de uma partida (a base pública não traz o gameId, que levaria aos jogadores)."""
+    return "h" + hashlib.sha256(f"lol-coach:{gid}".encode()).hexdigest()[:16]
+
+
+def _sample_keys() -> set:
+    keys = set()
+    if SAMPLES.exists():
+        with open(SAMPLES, encoding="utf-8") as f:
+            for line in f:
+                i = line.find('"gameId":')
+                if i >= 0:
+                    keys.add(line[i + 9:].split(",", 1)[0].strip().strip('"'))
+    return keys
+
+
+def ensure_dataset() -> bool:
+    """Sem amostras em data/winprob/, copia a base do repositório (dataset/winprob/). True se copiou."""
+    if os.environ.get("LOL_NO_DATASET") or SAMPLES.exists() or not (DATASET / "samples.jsonl.gz").exists():
+        return False
+    WP.mkdir(parents=True, exist_ok=True)
+    with gzip.open(DATASET / "samples.jsonl.gz", "rb") as src, open(SAMPLES, "wb") as dst:
+        shutil.copyfileobj(src, dst)
+    for name in ("model.json", "jungle_patterns.json"):
+        if (DATASET / name).exists() and not (WP / name).exists():
+            shutil.copyfile(DATASET / name, WP / name)
+    log(f"[winprob] base do repositório copiada para {WP} (dataset/winprob/)")
+    return True
+
+
+def cmd_export(args) -> None:
+    """data/winprob/ -> dataset/winprob/ (anonimizado), para versionar no git."""
+    games = load_samples()
+    DATASET.mkdir(parents=True, exist_ok=True)
+    buf = io.BytesIO()
+    with gzip.GzipFile(fileobj=buf, mode="wb", compresslevel=9, mtime=0) as gz:
+        for r in games:
+            r = dict(r)
+            if not str(r["gameId"]).startswith("h"):
+                r["gameId"] = anon_id(r["gameId"])
+            gz.write((json.dumps(r, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"))
+    (DATASET / "samples.jsonl.gz").write_bytes(buf.getvalue())
+    for name in ("model.json", "jungle_patterns.json"):
+        if (WP / name).exists():
+            shutil.copyfile(WP / name, DATASET / name)
+    meta = {"exportedAt": dt.datetime.now().isoformat(timespec="seconds"), "games": len(games),
+            "patches": dict(Counter(r.get("patch") for r in games).most_common()),
+            "queues": dict(Counter(str(r.get("queue")) for r in games).most_common()),
+            "notes": "Partidas ranqueadas (420/440) do servidor BR1 baixadas pela Riot API (Match-V5) com `lol winprob crawl`. "
+                     "Só números por minuto e campeões: sem nomes, Riot IDs, PUUIDs nem gameIds (trocados por hash)."}
+    save_json(DATASET / "meta.json", meta, indent=1)
+    log(f"[export] {len(games)} partidas -> {DATASET.relative_to(ROOT)} "
+        f"({(DATASET / 'samples.jsonl.gz').stat().st_size // 1024} KB)")
 
 
 # ============================================================================ treino
@@ -966,6 +1031,9 @@ def cmd_nightly(args) -> None:
         log(f"[nightly] fim em {(time.monotonic() - t0) / 60:.1f} min")
 
 
+ensure_dataset()
+
+
 # ============================================================================ main
 def main() -> None:
     ap = argparse.ArgumentParser(description="Chance de vitória por minuto e padrões de jungle.")
@@ -1000,9 +1068,10 @@ def main() -> None:
     c.add_argument("--l2", type=float, default=100.0)
     c.add_argument("--tolerance", type=float, default=0.01, help="piora máxima aceita na log loss da validação cruzada")
     c.add_argument("--log", help="arquivo para anexar a saída (o agendador usa data/winprob/nightly.log)")
+    sub.add_parser("export", help="grava a base anonimizada em dataset/winprob/ (para o git)")
     a = ap.parse_args()
     {"crawl": cmd_crawl, "train": cmd_train, "curve": cmd_curve, "state": cmd_state,
-     "junglers": cmd_junglers, "nightly": cmd_nightly}[a.cmd](a)
+     "junglers": cmd_junglers, "nightly": cmd_nightly, "export": cmd_export}[a.cmd](a)
 
 
 if __name__ == "__main__":
