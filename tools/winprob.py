@@ -6,7 +6,7 @@ Uso:
   python tools/winprob.py curve <gameId> [--team me|100|200] [--step 60]
   python tools/winprob.py state <gameId> <T> [--team me|100|200]
   python tools/winprob.py junglers [--champ Shaco] [--min-games 5] [--rebuild]
-  python tools/winprob.py nightly [--max 1000] [--mine 10] [--log data/winprob/nightly.log]
+  python tools/winprob.py nightly [--max 1000] [--mine 10] [--depth 3] [--log data/winprob/nightly.log]
   python tools/winprob.py export         grava a base anonimizada em dataset/winprob/ (vai para o git)
 
 Base no repositório (dataset/winprob/, versionada): samples.jsonl.gz (gameId trocado por um hash, sem seen.txt),
@@ -1000,7 +1000,7 @@ def cmd_nightly(args) -> None:
                     f"{(r.stderr.strip().splitlines() or ['?'])[-1]}")
         before = len(load_samples())
         try:
-            cmd_crawl(argparse.Namespace(max=args.max, queue=args.queue, per_player=10, depth=1))
+            cmd_crawl(argparse.Namespace(max=args.max, queue=args.queue, per_player=10, depth=args.depth))
         except SystemExit as e:  # chave inválida/expirada: segue com o que já tem
             log(f"[nightly] crawl interrompido: {e}")
         games = load_samples()
@@ -1067,6 +1067,10 @@ def main() -> None:
     c.add_argument("--queue", default="420,440")
     c.add_argument("--l2", type=float, default=100.0)
     c.add_argument("--tolerance", type=float, default=0.01, help="piora máxima aceita na log loss da validação cruzada")
+    c.add_argument("--depth", type=int, default=3,
+                   help="níveis de expansão a partir dos jogadores das suas partidas. A busca é em largura (termina um "
+                        "nível antes de abrir o próximo), então um valor maior só entra quando o nível mais perto acaba; "
+                        "cada nível se afasta um pouco do seu elo")
     c.add_argument("--log", help="arquivo para anexar a saída (o agendador usa data/winprob/nightly.log)")
     sub.add_parser("export", help="grava a base anonimizada em dataset/winprob/ (para o git)")
     a = ap.parse_args()
