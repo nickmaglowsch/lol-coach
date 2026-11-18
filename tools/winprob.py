@@ -497,7 +497,26 @@ def cmd_crawl(args) -> None:
     queued = set(seeds)
     new = fails = 0
     t0 = time.monotonic()
-    while frontier and new < args.max:
+    # partidas já vistas (de jogadores com nível < depth): se a fila acabar, reabre uma delas (1 chamada) só para
+    # pegar os jogadores e continuar a expansão. Sem isso, quando as partidas recentes das sementes já foram vistas
+    # numa execução anterior, a busca nunca chega ao nível seguinte. Os PUUIDs ficam só em memória.
+    revisit = deque()
+    while (frontier or revisit) and new < args.max:
+        if not frontier:
+            mid, depth = revisit.popleft()
+            try:
+                m = api.match(mid)
+            except RiotAPIError as e:
+                if any(c in str(e) for c in ("HTTP 401", "HTTP 403")):
+                    raise SystemExit(f"[crawl] {e}; parando (retome depois com o mesmo comando)")
+                fails += 1
+                continue
+            for p in m["info"]["participants"]:
+                pu = p.get("puuid")
+                if pu and pu not in queued:
+                    queued.add(pu)
+                    frontier.append((pu, depth + 1))
+            continue
         puuid, depth = frontier.popleft()
         try:
             ids = api.get(api.routing, f"/lol/match/v5/matches/by-puuid/{puuid}/ids",
@@ -514,6 +533,8 @@ def cmd_crawl(args) -> None:
                 continue
             gid = int(mid.split("_", 1)[1])
             if gid in seen or anon_id(gid) in known:
+                if depth < args.depth:
+                    revisit.append((mid, depth))
                 continue
             try:
                 m = api.match(mid)
