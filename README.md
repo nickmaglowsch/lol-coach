@@ -78,6 +78,7 @@ Com o Claude Code, basta pedir em linguagem natural, por exemplo: *"analisa minh
 ./lol pregame --html                    # lê o jogo atual (jogo aberto > carregamento > seleção) e grava reports/pregame.html
 ./lol pregame --listen --scout --html   # espera o carregamento e faz o scout dos jogadores (jungler inimigo primeiro)
 ./lol pregame --ally "Ekko,Cho'Gath,Vladimir,Nilah,Ashe" --enemy "Shaco,Akali,Yorick,Tristana,Thresh" --side blue
+./lol pregame --spectate "Amigo#BR1" --scout --html   # partida em andamento de outra pessoa (espectador da Riot API)
 ./lol pregame --for Amigo --ally "..." --enemy "..." --me "Ahri"   # pré-jogo de outra pessoa, a partir de um print
 ```
 
