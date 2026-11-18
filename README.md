@@ -13,6 +13,8 @@ Coach de League of Legends baseado nos **dados da timeline** das suas partidas, 
 - **Revisão de decisões** momento a momento (foi para a lane, atravessou o mapa, objetivo, recall, morte): estado na hora, sinais, resultado e veredito, com cortes e pesos **calibrados no seu histórico** (`lol calibrate`) e a **chance de vitória** antes → depois de um modelo treinado em partidas do seu elo (`lol winprob`).
 - **Visão antes dos objetivos** (`lol vision`), **padrão do jungle inimigo** por campeão (`lol junglers`) e **painel de evolução** com metas (`lol dashboard`).
 - **Página visual**: resumo em cards, gráfico de ouro, vereditos, replay com retratos dos campeões no minimapa, torres caindo no horário real, waves de minions (simulação, com checkbox), linha do tempo clicável, mapas das lutas e timing de objetivos.
+- **Pré-jogo** (`lol pregame`): na seleção ou no carregamento, diz por qual lado começar de jungle e o que esperar do jungle inimigo, com uma página curta para ler no celular. No carregamento faz o **scout dos jogadores** pelo cliente: o começo de jogo do jungler inimigo nas últimas partidas dele, além de elo, maestria e alertas de cada um (primeira vez com o campeão, fora da role, sequência de derrotas).
+- **Base de partidas do elo** já incluída (`dataset/winprob/`, anonimizada) e uma **rotina noturna** que a amplia e retreina o modelo sozinha.
 
 ## Requisitos
 
@@ -63,23 +65,51 @@ Modelos e calibração (precisam de partidas em cache; o crawl usa a Riot API):
 ./lol winprob curve <gameId>            # chance de vitória minuto a minuto
 ./lol junglers --champ Shaco            # o que esse campeão costuma fazer nos primeiros minutos
 ./lol dashboard --ranked                # reports/painel.html: evolução com metas
-./lol pregame --wait                    # na seleção de campeões: lado para começar e o que esperar do jungle inimigo
-./lol pregame --listen --scout --html   # espera o carregamento e faz o scout dos jogadores (jungler inimigo primeiro)
-./lol pregame --ally "Ekko,Cho'Gath,Vladimir,Nilah,Ashe" --enemy "Shaco,Akali,Yorick,Tristana,Thresh" --side blue
 ```
 
-Depois de trocar os `TODO` do spec pelo seu julgamento, rode `./lol render reports/<arquivo>.json`. O render recusa spec com `TODO`; use `--draft` só para pré-visualizar. Os passos abaixo mostram como montar o spec à mão.
-
-
-1. Escreva o spec da análise em `reports/<data>-<gameId>-<tema>.json`. O comando `./lol render --example` mostra todos os campos.
-2. Rode `./lol render reports/<arquivo>.json`. Ele gera o `.md` e o `.html` ao lado do spec.
-3. Abra o `.html` no navegador ou publique como Claude Artifact.
+Depois de trocar os `TODO` do spec pelo seu julgamento (`./lol render --example` mostra todos os campos), rode `./lol render reports/<arquivo>.json`. Ele gera o `.md` e o `.html` ao lado do spec. O render recusa spec com `TODO`; use `--draft` só para pré-visualizar. Abra o `.html` no navegador ou publique como Claude Artifact.
 
 Com o Claude Code, basta pedir em linguagem natural, por exemplo: *"analisa minha última flex, o jungle inimigo gankou o top 3 vezes?"*.
 
+### Pré-jogo e scout
+
+```bash
+./lol pregame --html                    # lê o jogo atual (jogo aberto > carregamento > seleção) e grava reports/pregame.html
+./lol pregame --listen --scout --html   # espera o carregamento e faz o scout dos jogadores (jungler inimigo primeiro)
+./lol pregame --ally "Ekko,Cho'Gath,Vladimir,Nilah,Ashe" --enemy "Shaco,Akali,Yorick,Tristana,Thresh" --side blue
+./lol pregame --for Amigo --ally "..." --enemy "..." --me "Ahri"   # pré-jogo de outra pessoa, a partir de um print
+```
+
+No Claude Code, o comando **`/pregame`** faz tudo isso com o modelo Haiku, que é rápido. Ele publica o que já dá na seleção, fica ouvindo o cliente e, quando chega o carregamento, republica a página com o scout no mesmo link.
+
+O scout só roda no carregamento ou com o jogo aberto. Na seleção, a Riot esconde os nomes do outro time, e revelar isso é contra as regras dela. Tudo vem da API local do cliente, sem gastar a chave da Riot. Na página e no terminal, os jogadores aparecem pelo campeão, e nenhum nome é gravado. Cada dado vem com o tamanho da amostra (são ~20 partidas por pessoa), e tudo é tendência, não previsão. O pré-jogo nunca escolhe, bane nem mexe em runas.
+
+### Chave da Riot (opcional)
+
+Sem chave, tudo funciona com o cliente aberto (até 20 partidas suas) e com a base incluída no repositório. Com chave, dá para ir além das 20 partidas, ter wards e compras por evento e ampliar a base:
+
+1. Em [developer.riotgames.com](https://developer.riotgames.com), gere a *Development Key* (vale 24 h) ou registre um produto pessoal para ter uma *Personal Key*, que não expira.
+2. Salve a chave sozinha em `riot_api_key.txt`, na raiz (o arquivo está no `.gitignore`), ou use a variável `RIOT_API_KEY`.
+
+A Riot criptografa o PUUID por chave. Ao trocar de chave, o `fetch` atualiza o seu PUUID e continua reconhecendo as partidas baixadas com a chave antiga.
+
+### Rotina noturna (Windows)
+
+`./lol winprob nightly` baixa as suas partidas recentes, amplia a base com partidas do seu elo (em largura, a partir dos jogadores das suas partidas, `--depth 3`), refaz os padrões de jungle e retreina o modelo. Se o modelo piorar, volta para o anterior. Para agendar todo dia às 03:00 (ou assim que o PC ligar), rode no PowerShell, a partir da pasta do projeto:
+
+```powershell
+$root = (Get-Location).Path
+$arg = "--headless cmd.exe /c `"`"$root\lol.cmd`" winprob nightly --max 1000 --log `"$root\data\winprob\nightly.log`"`""
+Register-ScheduledTask -TaskName "lol-coach crawl noturno" -Action (New-ScheduledTaskAction -Execute conhost.exe -Argument $arg -WorkingDirectory $root) `
+  -Trigger (New-ScheduledTaskTrigger -Daily -At 03:00) `
+  -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable -RunOnlyIfNetworkAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 3))
+```
+
+Com o limite da chave pessoal, são ~1.250 partidas por hora. A Riot não permite usar várias chaves para somar limite.
+
 ## Testes e contribuição
 
-- `./lol selftest --fixture` roda tudo com 3 partidas sintéticas geradas por `tools/fixture.py`, sem dados pessoais nem cliente aberto. É o que o CI roda (`.github/workflows/selftest.yml`, Python 3.10 e 3.12) a cada push e PR.
+- `./lol selftest --fixture` roda tudo com 3 partidas sintéticas geradas por `tools/fixture.py` e com a base de `dataset/`, sem dados pessoais nem cliente aberto. É o que o CI roda (`.github/workflows/selftest.yml`, Python 3.10 e 3.12) a cada push e PR. A `main` exige os dois checks antes do merge.
 - `./lol selftest` sem opção testa com as suas partidas em cache.
 - Para explorar a fixture: `./lol fixture /tmp/fx` e depois `LOL_DATA_DIR=/tmp/fx ./lol players 9100000003`.
 - Mudou o roteiro de `tools/fixture.py`? Atualize os números conferidos em `test_fixture` no selftest.
@@ -110,7 +140,7 @@ A base é anônima: cada partida tem só números por minuto (ouro, XP, CS, obje
 
 ## Limitações
 
-Os dados da timeline registram a posição de cada jogador **uma vez por minuto**. Ficam de fora: ganks sem kill, Flash e outros feitiços, HP, pings e voz. Pela API local também não há wards nem compras por evento. Cada relatório declara isso. Posições entre os minutos, recalls e roles são **estimados** e aparecem marcados como tal.
+Os dados da timeline registram a posição de cada jogador **uma vez por minuto** (vida e mana também, e só pela API oficial). Ficam de fora: ganks sem kill, Flash e outros feitiços, pings e voz. Pela API local também não há wards nem compras por evento. Cada relatório declara isso. Posições entre os minutos, recalls e roles são **estimados** e aparecem marcados como tal.
 
 ## Licença
 
