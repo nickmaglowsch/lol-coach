@@ -53,6 +53,10 @@ CALL = 150           # diferença de força (ouro do time aos 10:00) a partir da
 SIDE_GAP = 0.15      # diferença de probabilidade entre lados para dizer que o jungle inimigo "costuma ir" a um lado
 # lado do mapa (top = metade do barão/vastilarvas; bot = metade do dragão) -> campos de cada time nessa metade
 # (nomes e posições de tools/landmarks.py: aves azul (6943, 5422) fica na metade bot; aves vermelho na metade top)
+# O lado recomendado é onde estar quando o jungler inimigo aparece e sai o primeiro gank (~3:00-3:45). Com full clear,
+# isso quer dizer COMEÇAR do lado oposto e terminar o clear no lado recomendado; com 3 campos, começar no próprio lado.
+FULL_CLEAR_END = "3:15"     # fim aproximado de um full clear (6 campos)
+THREE_CAMP_END = "2:15"     # fim aproximado de 3 campos (nível 3)
 CAMPS = {("top", 100): "blue buff, gromp ou lobos", ("bot", 100): "red buff, aves ou krugs",
          ("top", 200): "red buff, aves ou krugs", ("bot", 200): "blue buff, gromp ou lobos"}
 
@@ -349,11 +353,11 @@ def plan(ally: dict[str, int], enemy: dict[str, int], team: int | None, me_role:
                  f"com mediana {when}")
         if lanes[ej_side]["edge"] >= CALL or strong == ej_side:
             rec = ej_side
-            R.append(f"o lado {ej_side} é o seu melhor começo (saldo estimado aos 10:00: {fmt(lanes[ej_side]['edge'])}): "
+            R.append(f"o lado {ej_side} é o seu lado mais forte (saldo estimado aos 10:00: {fmt(lanes[ej_side]['edge'])}): "
                      f"esteja lá para o contra-gank")
         else:
             rec = other
-            R.append(f"o lado {ej_side} não é o seu melhor começo (saldo estimado aos 10:00: {fmt(lanes[ej_side]['edge'])}): "
+            R.append(f"o lado {ej_side} não é o seu lado mais forte (saldo estimado aos 10:00: {fmt(lanes[ej_side]['edge'])}): "
                      f"avise essa lane para jogar seguro até ~{when} e troque do lado {other}")
         pe = ej_info.get("personal")
         out["confidence"] = "média" if (pat and pat["games"] >= 30) or (pe and pe["games"] >= 5) else "baixa"
@@ -369,7 +373,7 @@ def plan(ally: dict[str, int], enemy: dict[str, int], team: int | None, me_role:
             wt, wb = t["wins"] / t["games"], b["wins"] / b["games"]
             if abs(wt - wb) >= 0.10:
                 rec = "top" if wt > wb else "bot"
-                R.append(f"sem sinal no draft; no seu histórico você ganha mais começando no lado {rec} "
+                R.append(f"sem sinal no draft; no seu histórico você ganha mais quando está no lado {rec} entre 2 e 4 min "
                          f"(top {t['wins']}/{t['games']}, bot {b['wins']}/{b['games']})")
     if rec is None:
         R.append("sem sinal forte no draft nem no seu histórico: siga o primeiro objetivo "
@@ -377,7 +381,10 @@ def plan(ally: dict[str, int], enemy: dict[str, int], team: int | None, me_role:
                  f"vastilarvas a partir de ~{mmss(timers['vastilarvas']) if timers.get('vastilarvas') else '8:00'} no lado top)")
     out["recommendation"] = rec
     if rec and team:
-        out["startCamps"] = CAMPS[(rec, team)]
+        other_side = "bot" if rec == "top" else "top"
+        out["startSide"] = other_side
+        out["startCamps"] = CAMPS[(other_side, team)]      # full clear: começa do outro lado e termina no recomendado
+        out["altCamps"] = CAMPS[(rec, team)]               # 3 campos: começa e fica no lado recomendado
     if me_role != "JUNGLE":
         R.append(f"você está de {ROLE_PT.get(me_role, me_role)}: o lado é a decisão do seu jungler; use o resto como aviso")
 
@@ -437,8 +444,16 @@ def print_plan(p: dict) -> None:
         print(f"Chance de vitória no minuto 0 (modelo): {pct(p['baseChance'])}; o modelo não vê campeões, só o lado do mapa.")
     print()
     if p["recommendation"]:
-        cam = f" (comece por {p['startCamps']})" if p.get("startCamps") else ""
-        print(f">> Comece pelo lado {p['recommendation'].upper()}{cam}. Confiança {p['confidence']}.")
+        rec = p["recommendation"]
+        other = "bot" if rec == "top" else "top"
+        if p.get("startCamps"):
+            how = f": comece no lado {other.upper()} ({p['startCamps']}) e faça o full clear até o {rec}"
+        else:
+            how = f": faça o full clear começando do lado {other} (informe --side para ver os campos)"
+        print(f">> Esteja no lado {rec.upper()} por volta de {FULL_CLEAR_END}{how}. Confiança {p['confidence']}.")
+        alt = f" ({p['altCamps']})" if p.get("altCamps") else ""
+        print(f"   - alternativa: comece no próprio lado {rec}{alt} e faça 3 campos para chegar antes "
+              f"(~{THREE_CAMP_END}, nível 3, com menos ouro)")
     else:
         print(">> Sem recomendação de lado: os dados não apontam um.")
     for r in p["reasons"]:
@@ -464,7 +479,7 @@ def print_plan(p: dict) -> None:
         print(f"\nSeu histórico ({h['games']} partidas em cache):")
     bs = h["bySide"]
     if bs and not p.get("forPlayer"):
-        print("   - de jungle, começando (min 2-4) no lado " + "; ".join(
+        print("   - de jungle, onde você estava entre 2 e 4 min: " + "; ".join(
             f"{k}: {v['wins']}/{v['games']} vitórias ({pct(v['wins'] / v['games'])})" for k, v in sorted(bs.items())))
     for key, label in (("withChamp", "com"), ("vsJungler", "contra o jungle")):
         x = h.get(key)
@@ -480,7 +495,7 @@ TEMPLATE = Path(__file__).resolve().parent / "templates" / "pregame.html"
 JG_SPOT = {(100, "top"): (26, 46), (100, "bot"): (53, 73), (200, "top"): (48, 27), (200, "bot"): (74, 53)}
 
 
-def map_svg(rec: str | None, team: int | None, ej_side: str | None, ej_label: str) -> str:
+def map_svg(rec: str | None, team: int | None, ej_side: str | None, ej_label: str, start_side: str | None = None) -> str:
     def half(side):
         pts = "0,0 100,0 0,100" if side == "top" else "100,0 100,100 0,100"
         fill = "var(--map-pick)" if rec == side else "var(--map)"
@@ -495,6 +510,16 @@ def map_svg(rec: str | None, team: int | None, ej_side: str | None, ej_label: st
            f'<circle cx="8" cy="92" r="6" fill="{blue}"/><circle cx="92" cy="8" r="6" fill="{red}"/>',
            '<text x="31" y="27" font-size="7" fill="var(--muted)" text-anchor="middle">barão</text>',
            '<text x="70" y="78" font-size="7" fill="var(--muted)" text-anchor="middle">dragão</text>']
+    if rec and start_side and team:
+        sx, sy = JG_SPOT[(team, start_side)]
+        ex, ey = JG_SPOT[(team, rec)]
+        out.append(f'<path d="M{sx} {sy} L{ex} {ey}" stroke="var(--ally)" stroke-width="1.6" stroke-dasharray="3 2" '
+                   f'fill="none"/><circle cx="{sx}" cy="{sy}" r="3.5" fill="var(--surface)" stroke="var(--ally)" '
+                   f'stroke-width="1.6"/><circle cx="{ex}" cy="{ey}" r="4" fill="var(--ally)"/>'
+                   f'<text x="{sx}" y="{sy + 10}" font-size="6.5" fill="var(--ally)" text-anchor="middle" paint-order="stroke" '
+                   f'stroke="var(--surface)" stroke-width="2.5">início</text>'
+                   f'<text x="{ex}" y="{ey - 7}" font-size="6.5" fill="var(--ally)" text-anchor="middle" paint-order="stroke" '
+                   f'stroke="var(--surface)" stroke-width="2.5">~{FULL_CLEAR_END}</text>')
     if ej_side:
         enemy_team = 200 if team != 200 else 100
         x, y = JG_SPOT[(enemy_team, ej_side)] if team else ((30, 30) if ej_side == "top" else (70, 70))
@@ -519,13 +544,17 @@ def page(p: dict, alias: str) -> str:
     who = f'{H(p["forPlayer"])}: ' if p.get("forPlayer") else ""
     head = f'Pré-jogo · {who}{H(p["me"] or "?")} ({ROLE_PT.get(p["meRole"], p["meRole"])}) · {team_txt}'
     if rec:
-        title = f"Comece pelo {rec}"
-        camps = f'<p class="camps">{H(p["startCamps"])}</p>' if p.get("startCamps") else \
-            '<p class="sub">informe o lado do mapa para ver os campos</p>'
+        title = f"Termine no {rec}"
+        other = "bot" if rec == "top" else "top"
+        camps = (f'<p class="camps">Comece no {other}: {H(p["startCamps"])} · full clear até o {rec} (~{FULL_CLEAR_END})</p>'
+                 f'<p class="sub">Ou 3 campos no próprio {rec} ({H(p["altCamps"])}): chega ~{THREE_CAMP_END}, nível 3</p>'
+                 if p.get("startCamps") else
+                 f'<p class="camps">Full clear começando do lado {other} (~{FULL_CLEAR_END})</p>'
+                 '<p class="sub">informe o lado do mapa para ver os campos</p>')
         conf = f'<span class="conf {"media" if p["confidence"] == "média" else ""}">confiança {H(p["confidence"])}</span>'
     else:
         title, camps, conf = "Sem lado definido", '<p class="sub">os dados não apontam um lado</p>', ""
-    B.append(f'<section class="pick">{map_svg(rec, p["team"], ej and ej.get("likelySide"), ej_label)}'
+    B.append(f'<section class="pick">{map_svg(rec, p["team"], ej and ej.get("likelySide"), ej_label, p.get("startSide"))}'
              f'<div class="txt"><div class="eyebrow">{head}</div><h1>{H(title)}</h1>{camps}{conf}</div></section>')
     B.append('<ul class="why">' + "".join(f"<li>{H(r[:1].upper() + r[1:])}</li>" for r in p["reasons"]) + "</ul>")
 
@@ -598,7 +627,7 @@ def page(p: dict, alias: str) -> str:
     h = p["history"]
     li = []
     for k, v in sorted(h["bySide"].items()):
-        li.append(f'De jungle, começando no lado {k}: {v["wins"]}/{v["games"]} vitórias ({pct(v["wins"] / v["games"])})')
+        li.append(f'De jungle, no lado {k} entre 2 e 4 min: {v["wins"]}/{v["games"]} vitórias ({pct(v["wins"] / v["games"])})')
     for key, label in (("withChamp", "Com"), ("vsJungler", "Contra o jungle")):
         x = h.get(key)
         if x and x["champion"]:

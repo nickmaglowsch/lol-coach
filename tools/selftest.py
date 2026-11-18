@@ -254,6 +254,22 @@ def test_data(fixture: dict | None = None) -> None:
     except Exception:
         ok = False
     check(ok, "lol pregame --json: 5 roles atribuídas em cada time")
+    # lado recomendado = onde estar no ~3:15; com full clear, os campos de início ficam no lado OPOSTO
+    from pregame import CAMPS as CAMPS_
+    clear_ok = True
+    for side_arg, tm in (("blue", 100), ("red", 200)):
+        r = run_lol("pregame", "--json", "--ally", ally, "--enemy", enemy, "--side", side_arg)
+        try:
+            pj = json.loads(r.stdout)
+        except Exception:
+            clear_ok = False
+            continue
+        rec = pj.get("recommendation")
+        if rec:
+            other = "bot" if rec == "top" else "top"
+            clear_ok &= pj.get("startSide") == other and pj.get("startCamps") == CAMPS_[(other, tm)] \
+                and pj.get("altCamps") == CAMPS_[(rec, tm)]
+    check(clear_ok, "pré-jogo: full clear começa do lado oposto ao recomendado (azul e vermelho)")
     # leitores do jogo atual com respostas simuladas no formato de cada fonte (sem cliente)
     import pregame as pg
     t_me = [p for p in s["participants"] if p["team"] == mine["team"]]
