@@ -306,6 +306,18 @@ def test_data(fixture: dict | None = None) -> None:
     r3 = pg.parse_live(live, {}, champs_all)
     check(r3["complete"] and r3["team"] == 100 and r3["me"] == mine["championId"] and r3["smiteEnemy"]
           and ("JUNGLE", jg_en["championId"]) in r3["enemy"], "pré-jogo: leitura do jogo aberto (simulada)")
+    # espectador da Riot API (partida de outra pessoa): Smite marca os dois junglers; Riot IDs só para o scout
+    friend = t_en[0]
+    spec_g = {"gameLength": 600, "mapId": 11, "gameQueueConfigId": 420,
+              "participants": [{"puuid": f"sim-{p['pid']}", "teamId": p["team"], "championId": p["championId"],
+                                "spell1Id": 11 if p in (mine, jg_en) else 4, "spell2Id": 14, "riotId": f"x{p['pid']}#BR1"}
+                               for p in t_me + t_en]}
+    r4 = pg.parse_spectator(spec_g, f"sim-{friend['pid']}", champs_all)
+    check(r4["complete"] and r4["team"] == friend["team"] and r4["me"] == friend["championId"]
+          and ("JUNGLE", jg_en["championId"]) in r4["ally"] and ("JUNGLE", mine["championId"]) in r4["enemy"]
+          and len(r4["riotIds"]) == 10 and "10 min" in r4["source"], "pré-jogo: leitura do espectador da Riot API (simulada)")
+    r = run_lol("pregame", "--spectate", "SemTag")
+    check(r.returncode != 0 and "Nome#TAG" in (r.stderr + r.stdout), "lol pregame --spectate: pede o Riot ID completo")
     hp = Path(tempfile.mkdtemp(prefix="lolcoach-pregame-")) / "pregame.html"
     r = run_lol("pregame", "--ally", ally, "--enemy", enemy, "--side", "blue", "--html", str(hp))
     page = hp.read_text(encoding="utf-8") if hp.exists() else ""

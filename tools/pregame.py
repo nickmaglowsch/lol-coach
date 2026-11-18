@@ -6,6 +6,8 @@
   lol pregame --wait [--timeout 900]            espera ter os 10 campeões (de qualquer fonte) e imprime uma vez
   lol pregame --listen [--scout]                fica ouvindo o cliente e começa assim que o carregamento tiver os dois
                                                   times (ignora a seleção de campeões); com --scout, levanta os jogadores
+  lol pregame --spectate "Nome#TAG" [--scout]  partida em andamento de outra pessoa (ex.: um amigo), pelo espectador da
+                                                  Riot API (do carregamento em diante; precisa de chave); página própria
   lol pregame --scout [--scout-budget 45]       scout pelo cliente (só no carregamento ou com o jogo aberto): o começo de
                                                   jogo do jungler inimigo nas últimas partidas de jungle dele, e elo,
                                                   maestria e partidas recentes de cada jogador (tools/scout.py)
@@ -873,22 +875,88 @@ def _live_identities(lcu: LCU, champs: dict[int, str]) -> dict[int, dict]:
     return out
 
 
+def parse_spectator(g: dict, puuid: str, champs: dict[int, str]) -> dict:
+    """Resposta do espectador (GET /lol/spectator/v5/active-games/by-summoner/{puuid}) -> mesmo formato das outras
+    fontes. Não traz a role: o jungler sai do Smite, o resto é inferido. Os Riot IDs ficam só para o scout."""
+    parts = g.get("participants") or []
+    me = next((p for p in parts if p.get("puuid") == puuid), None)
+    team = me["teamId"] if me else None
+    rows, smite, rid = {100: [], 200: []}, {100: set(), 200: set()}, {}
+    for p in parts:
+        t, cid = p.get("teamId"), int(p.get("championId") or 0)
+        if t not in rows or not cid:
+            continue
+        rows[t].append((None, cid))
+        if {p.get("spell1Id"), p.get("spell2Id")} & SMITE_IDS:
+            smite[t].add(cid)
+        if p.get("riotId"):
+            rid[cid] = p["riotId"]
+    fixed = {}
+    for t in (100, 200):
+        rows[t], fixed[t] = _with_smite_as_jungle(rows[t], smite[t])
+    other = 200 if team == 100 else 100
+    ally, enemy = (rows[team], rows[other]) if team else (rows[100], rows[200])
+    mins = int(g.get("gameLength") or 0) // 60
+    return {"source": f"espectador da Riot API (partida em andamento, {mins} min)" if mins > 0 else
+            "espectador da Riot API (carregamento)", "ally": ally, "enemy": enemy,
+            "me": int(me["championId"]) if me else None, "team": team, "smiteEnemy": fixed.get(other, False),
+            "complete": len(ally) == 5 and len(enemy) == 5, "mapId": g.get("mapId"),
+            "queue": g.get("gameQueueConfigId"), "riotIds": rid, "gameLength": g.get("gameLength")}
+
+
+def read_spectator(riot_id: str, champs: dict[int, str]) -> dict:
+    """Partida em andamento de um jogador (Riot ID "Nome#TAG") pelo espectador da Riot API. Só existe do carregamento
+    em diante (na seleção, não). Precisa de chave da Riot."""
+    from common import RiotAPI, RiotAPIError
+    if "#" not in riot_id:
+        raise SystemExit('Use o Riot ID completo: --spectate "Nome#TAG".')
+    name, tag = riot_id.rsplit("#", 1)
+    try:
+        api = RiotAPI()
+        pu = api.account_by_riot_id(name, tag)["puuid"]
+        g = api.get("br1", f"/lol/spectator/v5/active-games/by-summoner/{pu}")
+    except RiotAPIError as e:
+        if "404" in str(e):
+            raise SystemExit(f"{riot_id} não está em partida agora (o espectador só mostra do carregamento em diante; "
+                             "na seleção de campeões, use um print com --for).") from None
+        raise SystemExit(f"Riot API: {e}") from None
+    _raw("espectador", g)
+    r = parse_spectator(g, pu, champs)
+    r["isMe"] = pu in me_ids()
+    r["name"] = name
+    return r
+
+
 def run_scout(ally: dict[int, str], enemy: dict[int, str], me_cid: int | None, champs: dict[int, str],
-              budget: float, source: str) -> tuple[dict | None, str | None]:
-    """Scout pelo cliente. Precisa dos puuids da sessão do gameflow (carregamento ou jogo aberto)."""
+              budget: float, source: str, riot_ids: dict[int, str] | None = None,
+              queue: int | None = None) -> tuple[dict | None, str | None]:
+    """Scout pelo cliente. Os puuids vêm da sessão do gameflow (sua partida) ou, com riot_ids (partida de outra pessoa,
+    pelo espectador), de /lol-summoner/v1/alias/lookup."""
     if str(source).startswith("seleção") or source == "campeões informados":
         return None, "só no carregamento ou com o jogo aberto (na seleção a Riot esconde os nomes do outro time)"
     import scout as sc_mod
     try:
         lcu = LCU()
-        ids = sc_mod.identities(lcu)
-        q = ((lcu.get("/lol-gameflow/v1/session") or {}).get("gameData") or {}).get("queue") or {}
+        if riot_ids is not None:
+            ids = {}
+            for cid, rid in riot_ids.items():
+                gn, _, tl = rid.partition("#")
+                try:
+                    r = lcu.get("/lol-summoner/v1/alias/lookup", {"gameName": gn, "tagLine": tl}) or {}
+                except LCUError:
+                    r = {}
+                if r.get("puuid"):
+                    ids[cid] = {"puuid": r["puuid"]}
+            q = {"id": queue}
+        else:
+            ids = sc_mod.identities(lcu)
+            q = ((lcu.get("/lol-gameflow/v1/session") or {}).get("gameData") or {}).get("queue") or {}
     except LCUError as e:
         return None, f"cliente indisponível ({e})"
     n_enemy = sum(c in ids for c in enemy)
     print(f"[scout] sessão do cliente: {sum(c in ids for c in ally)}/{len(ally)} aliados e {n_enemy}/{len(enemy)} "
           f"inimigos com puuid (fila {q.get('id')})", file=sys.stderr)
-    if not n_enemy:
+    if not n_enemy and riot_ids is None:
         ids.update(_live_identities(lcu, champs))
     players = []
     for side, d in (("enemy", enemy), ("ally", ally)):
@@ -947,6 +1015,9 @@ def main() -> None:
     ap.add_argument("--for", dest="for_player", metavar="NOME",
                     help="pré-jogo de outra pessoa (ex.: um amigo, pelo print): exige --ally/--enemy e --me com o "
                          "campeão dela; sem o seu histórico; página em reports/pregame-<nome>.html")
+    ap.add_argument("--spectate", metavar="NOME#TAG",
+                    help="partida em andamento de outra pessoa (ou a sua), pelo espectador da Riot API; do carregamento "
+                         "em diante. Sem --for, a página leva o nome do jogador (reports/pregame-<nome>.html)")
     ap.add_argument("--source", choices=["auto", "selecao", "carregamento", "jogo"], default="auto",
                     help="de onde ler o jogo atual (padrão: a melhor disponível)")
     ap.add_argument("--wait", action="store_true", help="espera ter os 10 campeões")
@@ -967,11 +1038,19 @@ def main() -> None:
         print("[aviso] sem data/winprob/samples.jsonl: rode `lol winprob crawl` para ter força de lane e padrões de jungle.",
               file=sys.stderr)
 
-    if a.for_player and not (a.ally and a.enemy and a.me):
-        raise SystemExit("--for precisa de --ally, --enemy e --me (o campeão da pessoa), lidos do print.")
+    spec = read_spectator(a.spectate, champs) if a.spectate else None
+    if spec and not spec["isMe"] and not a.for_player:
+        a.for_player = spec["name"]
+    if a.for_player and not spec and not (a.ally and a.enemy and a.me):
+        raise SystemExit("--for precisa de --ally, --enemy e --me (o campeão da pessoa), lidos do print; "
+                         "ou --spectate \"Nome#TAG\" com a pessoa já no carregamento ou em jogo.")
     main_role = None if a.for_player else my_main_role()
     team, me_cid, source = None, None, "campeões informados"
-    if a.ally or a.enemy:
+    if spec:
+        if spec.get("mapId") not in (None, 11):
+            raise SystemExit(f"O pré-jogo é só para Summoner's Rift (mapa desta partida: {spec['mapId']}).")
+        ally_l, enemy_l, team, me_cid, source = spec["ally"], spec["enemy"], spec["team"], spec["me"], spec["source"]
+    elif a.ally or a.enemy:
         if not (a.ally and a.enemy):
             raise SystemExit("Informe --ally e --enemy (5 campeões cada; roles opcionais).")
         ally_l, enemy_l = parse_team(a.ally, champs), parse_team(a.enemy, champs)
@@ -1022,7 +1101,8 @@ def main() -> None:
     me_role = ally.get(me_cid) if me_cid in ally else (main_role or "JUNGLE")
     sc, note = None, None
     if a.scout:
-        sc, note = run_scout(ally, enemy, me_cid, champs, a.scout_budget, source)
+        sc, note = run_scout(ally, enemy, me_cid, champs, a.scout_budget, source,
+                             riot_ids=spec["riotIds"] if spec else None, queue=spec["queue"] if spec else None)
     p = plan({r: c for c, r in ally.items()}, {r: c for c, r in enemy.items()}, team, me_role, champs,
              history=not a.for_player, scout=sc)
     p["source"] = source
